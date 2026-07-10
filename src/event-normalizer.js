@@ -185,7 +185,13 @@ function createEventId({
   receivedAt,
 }) {
   const fingerprint = messageId
-    ? [EVENT_FINGERPRINT_VERSION, channel ?? "", accountId ?? "", messageId].join("|")
+    ? [
+        EVENT_FINGERPRINT_VERSION,
+        channel ?? "",
+        accountId ?? "",
+        conversationId ?? "",
+        messageId,
+      ].join("|")
     : [
         EVENT_FINGERPRINT_VERSION,
         channel ?? "",
@@ -297,8 +303,8 @@ export function buildCorrelationKeys({ event = {}, context = {} } = {}) {
   const contentHash = sha256(text);
   const keys = [];
 
-  if (channel !== null && messageId !== null) {
-    keys.push(`exact|${channel}|${accountId}|${messageId}`);
+  if (channel !== null && conversationId !== null && messageId !== null) {
+    keys.push(`exact|${channel}|${accountId}|${conversationId}|${messageId}`);
   }
 
   if (sessionKey !== null && timestamp !== null && senderId !== null) {

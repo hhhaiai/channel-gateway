@@ -101,7 +101,7 @@ test("normalizeInboundEvent emits the canonical rich inbound DTO", () => {
   });
 
   assert.deepEqual(normalized, {
-    id: eventIdFor("v1|discord|account-1|message-9"),
+    id: eventIdFor("v1|discord|account-1|conversation-1|message-9"),
     channel: "discord",
     accountId: "account-1",
     conversationId: "conversation-1",
@@ -164,7 +164,10 @@ test("normalizeInboundEvent preserves millisecond timestamps and keeps exact IDs
 
   assert.equal(first.receivedAt, "2024-05-31T16:08:37.123Z");
   assert.equal(typeof first.receivedAt, "string");
-  assert.equal(first.id, eventIdFor("v1|slack|account-2|message-10"));
+  assert.equal(
+    first.id,
+    eventIdFor("v1|slack|account-2|conversation-2|message-10"),
+  );
   assert.equal(second.id, first.id);
 });
 
@@ -285,7 +288,11 @@ test("normalizeInboundEvent consumes a CorrelationBuffer event-context record as
   buffer.capture(captured);
   const enrichment = buffer.take({
     event: { messageId: "message-12" },
-    context: { channelId: "discord", accountId: "account-6" },
+    context: {
+      channelId: "discord",
+      accountId: "account-6",
+      conversationId: "conversation-6",
+    },
   });
   const event = {
     content: "current content",
@@ -401,7 +408,7 @@ test("buildCorrelationKeys returns exact, session, then conversation keys", () =
       },
     }),
     [
-      "exact|discord|account-4|message-11",
+      "exact|discord|account-4|conversation-4|message-11",
       `session|session-4|1717171719000|user-3|${contentHash}`,
       `conversation|discord|account-4|conversation-4|1717171719000|${contentHash}`,
     ],
@@ -447,7 +454,7 @@ test("buildCorrelationKeys uses the default account when accountId is absent", (
       },
     }),
     [
-      "exact|discord|default|message-13",
+      "exact|discord|default|conversation-7|message-13",
       `session|session-7|1717171724000|user-6|${contentHash}`,
       `conversation|discord|default|conversation-7|1717171724000|${contentHash}`,
     ],
@@ -476,5 +483,40 @@ test("buildCorrelationKeys correlates media-only events with the empty content h
       `session|session-8|1717171725000|user-7|${emptyContentHash}`,
       `conversation|discord|account-7|conversation-8|1717171725000|${emptyContentHash}`,
     ],
+  );
+});
+
+test("provider-local message ids remain distinct across conversations", () => {
+  const base = {
+    event: {
+      content: "same provider id",
+      timestamp: 1_717_171_730,
+      messageId: "42",
+      senderId: "user-42",
+    },
+  };
+  const first = normalizeInboundEvent({
+    ...base,
+    context: {
+      channelId: "telegram",
+      accountId: "default",
+      conversationId: "chat-a",
+    },
+  });
+  const second = normalizeInboundEvent({
+    ...base,
+    context: {
+      channelId: "telegram",
+      accountId: "default",
+      conversationId: "chat-b",
+    },
+  });
+
+  assert.notEqual(first.id, second.id);
+  assert.equal(first.id, eventIdFor("v1|telegram|default|chat-a|42"));
+  assert.equal(second.id, eventIdFor("v1|telegram|default|chat-b|42"));
+  assert.deepEqual(
+    buildCorrelationKeys({ ...base, context: { channelId: "telegram", conversationId: "chat-a" } })[0],
+    "exact|telegram|default|chat-a|42",
   );
 });

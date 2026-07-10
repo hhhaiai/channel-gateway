@@ -33,6 +33,7 @@ test("CorrelationBuffer takes exact matches once and removes every alias", () =>
       event: {
         channel: "discord",
         accountId: "account-1",
+        conversationId: "conversation-1",
         messageId: "message-1",
         content: "content changed after capture",
       },
@@ -101,6 +102,7 @@ test("CorrelationBuffer prunes records at their TTL boundary", () => {
     event: {
       channel: "slack",
       accountId: "account-3",
+      conversationId: "conversation-expiring",
       messageId: "message-expiring",
     },
     context: {},
@@ -124,6 +126,7 @@ test("CorrelationBuffer evicts the oldest record when the bound is exceeded", ()
     event: {
       channel: "whatsapp",
       accountId: "account-4",
+      conversationId: `conversation-${messageId}`,
       messageId,
     },
     context: {},
@@ -187,6 +190,7 @@ test("CorrelationBuffer clears all old aliases when a new record reuses one alia
       event: {
         channel: "discord",
         accountId: "account-5",
+        conversationId: "conversation-old",
         messageId: "message-old",
       },
       context: {},
@@ -221,6 +225,7 @@ test("CorrelationBuffer prunes later records that expire first after a clock rol
     event: {
       channel: "slack",
       accountId: "account-6",
+      conversationId: "conversation-clock",
       messageId: "message-clock-first",
     },
     context: {},
@@ -229,6 +234,7 @@ test("CorrelationBuffer prunes later records that expire first after a clock rol
     event: {
       channel: "slack",
       accountId: "account-6",
+      conversationId: "conversation-clock",
       messageId: "message-clock-second",
     },
     context: {},
@@ -263,4 +269,33 @@ test("CorrelationBuffer requires positive integer TTL and entry bounds", () => {
     () => new CorrelationBuffer({ ...valid, maxEntries: "2" }),
     /maxEntries must be a positive integer/,
   );
+});
+
+test("CorrelationBuffer does not merge equal provider message ids from different conversations", () => {
+  const buffer = new CorrelationBuffer({
+    ttlMs: 1_000,
+    maxEntries: 10,
+    now: () => 70_000,
+  });
+  const makeRecord = (conversationId, senderName) => ({
+    event: {
+      channel: "telegram",
+      accountId: "default",
+      conversationId,
+      messageId: "42",
+      timestamp: 70_000,
+      content: "same",
+      senderName,
+    },
+    context: {},
+  });
+  const first = makeRecord("chat-a", "Alice");
+  const second = makeRecord("chat-b", "Bob");
+
+  buffer.capture(first);
+  buffer.capture(second);
+
+  assert.equal(buffer.size, 2);
+  assert.equal(buffer.take(first), first);
+  assert.equal(buffer.take(second), second);
 });

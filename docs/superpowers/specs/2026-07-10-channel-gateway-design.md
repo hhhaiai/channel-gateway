@@ -96,7 +96,7 @@ Bridge 同时注册：
 
 关联键优先级：
 
-1. `channel + accountId + messageId`
+1. `channel + accountId + conversationId + messageId`（平台 message id 默认只在会话内唯一）
 2. `sessionKey + timestamp + senderId + content hash`
 3. `channel + accountId + conversationId + timestamp + content hash`
 

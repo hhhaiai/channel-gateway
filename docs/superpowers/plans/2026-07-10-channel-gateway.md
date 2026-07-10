@@ -221,7 +221,7 @@ export function normalizeInboundEvent({ event, context, enrichment }) {
   const messageId = clean(rich.event.messageId ?? rich.context.messageId) || null;
   const receivedAt = (normalizeTimestamp(rich.event.timestamp) ?? new Date()).toISOString();
   const fingerprint = messageId
-    ? `v1|${channel}|${accountId}|${messageId}`
+    ? `v1|${channel}|${accountId}|${conversationId}|${messageId}`
     : `v1|${channel}|${accountId}|${conversationId}|${clean(rich.event.senderId ?? rich.context.senderId)}|${receivedAt}|${sha256(clean(rich.event.content ?? rich.event.body))}`;
   return {
     id: `evt_${sha256(fingerprint).slice(0, 32)}`,
@@ -246,7 +246,7 @@ export function normalizeInboundEvent({ event, context, enrichment }) {
 }
 ```
 
-Identity must be `evt_` plus the first 32 lowercase hex characters of SHA-256 over a versioned fingerprint. Prefer `channel/accountId/messageId`; otherwise include conversation, sender, normalized timestamp, and content hash. Media arrays must align by index and use `null` for missing path/url/MIME values.
+Identity must be `evt_` plus the first 32 lowercase hex characters of SHA-256 over a versioned fingerprint. Prefer `channel/accountId/conversationId/messageId` because provider message ids are generally scoped to one conversation; otherwise include conversation, sender, normalized timestamp, and content hash. Media arrays must align by index and use `null` for missing path/url/MIME values.
 
 Run: `node --test test/event-normalizer.test.js`
 Expected: PASS, 3 tests.
