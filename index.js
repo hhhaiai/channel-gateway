@@ -1,8 +1,5 @@
-import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
+import { dispatchGatewayMethod } from "openclaw/plugin-sdk/gateway-method-runtime";
 
-export default definePluginEntry({
-  id: "channel-gateway",
-  name: "Channel Gateway",
-  description: "Provides a stable interoperability boundary for channel messages.",
-  register() {},
-});
+import { createChannelGatewayPlugin } from "./src/plugin.js";
+
+export default createChannelGatewayPlugin({ dispatchGatewayMethod });

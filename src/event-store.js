@@ -161,6 +161,9 @@ function deliveryRelation(row) {
     linkId: row.link_id,
     sourceEndpointId: row.source_endpoint_id,
     destinationEndpointId: row.destination_endpoint_id,
+    destinationChannel: row.destination_channel,
+    destinationAccountId: row.destination_account_id,
+    destinationConversationId: row.destination_conversation_id,
     receiptMessageId: row.receipt_message_id,
   };
 }

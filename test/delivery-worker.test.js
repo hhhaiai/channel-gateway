@@ -63,6 +63,38 @@ test("claims, sends, and completes one delivery with the active lease", async ()
   ]);
 });
 
+test("drains a bounded backlog sequentially in one tick", async () => {
+  const jobs = [1, 2, 3].map((index) => ({
+    ...JOB,
+    id: `dlv_${index}`,
+    request: { ...JOB.request, idempotencyKey: `dlv_${index}` },
+  }));
+  const completed = [];
+  let claims = 0;
+  const worker = new DeliveryWorker({
+    store: {
+      claimNextDelivery({ leaseToken }) {
+        claims += 1;
+        const job = jobs.shift();
+        return job ? { ...job, leaseToken } : undefined;
+      },
+      completeDelivery(id) {
+        completed.push(id);
+        return { id, status: "sent" };
+      },
+      retryDelivery() {
+        throw new Error("unexpected retry");
+      },
+    },
+    sender: async () => ({ messageId: "sent" }),
+    leaseTokenFactory: () => `lease-${claims + 1}`,
+  });
+
+  assert.equal(await worker.tick(), true);
+  assert.deepEqual(completed, ["dlv_1", "dlv_2", "dlv_3"]);
+  assert.equal(claims, 4);
+});
+
 test("treats a successful send without a receipt as sent without retrying", async () => {
   const store = createStore(JOB);
   const worker = new DeliveryWorker({

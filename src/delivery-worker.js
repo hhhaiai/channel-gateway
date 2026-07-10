@@ -21,6 +21,7 @@ export class DeliveryWorker {
     pollMs = 1_000,
     maxAttempts = 5,
     leaseMs = 60_000,
+    maxBatchSize = 100,
     now = Date.now,
     leaseTokenFactory = randomUUID,
     setTimer = setTimeout,
@@ -35,12 +36,14 @@ export class DeliveryWorker {
     positiveInteger("pollMs", pollMs);
     positiveInteger("maxAttempts", maxAttempts);
     positiveInteger("leaseMs", leaseMs);
+    positiveInteger("maxBatchSize", maxBatchSize);
 
     this.store = store;
     this.sender = sender;
     this.pollMs = pollMs;
     this.maxAttempts = maxAttempts;
     this.leaseMs = leaseMs;
+    this.maxBatchSize = maxBatchSize;
     this.now = now;
     this.leaseTokenFactory = leaseTokenFactory;
     this.setTimer = setTimer;
@@ -63,7 +66,7 @@ export class DeliveryWorker {
       return this.activeTick;
     }
 
-    const active = this.#runOne();
+    const active = this.#runBatch();
     this.activeTick = active.finally(() => {
       if (this.activeTick === active || this.activeTick === wrapped) {
         this.activeTick = null;
@@ -91,7 +94,7 @@ export class DeliveryWorker {
       leaseToken,
     });
     if (!delivery) {
-      return false;
+      return undefined;
     }
 
     try {
@@ -117,6 +120,18 @@ export class DeliveryWorker {
       });
       return false;
     }
+  }
+
+  async #runBatch() {
+    let completed = false;
+    for (let index = 0; index < this.maxBatchSize; index += 1) {
+      const result = await this.#runOne();
+      if (result === undefined) {
+        break;
+      }
+      completed ||= result;
+    }
+    return completed;
   }
 
   #schedule(delay) {
