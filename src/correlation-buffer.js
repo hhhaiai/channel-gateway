@@ -75,9 +75,10 @@ export class CorrelationBuffer {
     const currentTime = this.now();
 
     for (const entry of this.records) {
-      if (entry.capturedAt + this.ttlMs <= currentTime) {
-        this.remove(entry);
+      if (entry.capturedAt + this.ttlMs > currentTime) {
+        break;
       }
+      this.remove(entry);
     }
   }
 

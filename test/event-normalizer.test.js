@@ -453,3 +453,28 @@ test("buildCorrelationKeys uses the default account when accountId is absent", (
     ],
   );
 });
+
+test("buildCorrelationKeys correlates media-only events with the empty content hash", () => {
+  const emptyContentHash = createHash("sha256").update("").digest("hex");
+
+  assert.deepEqual(
+    buildCorrelationKeys({
+      event: {
+        content: "   ",
+        timestamp: 1_717_171_725,
+        senderId: "user-7",
+        mediaUrls: ["https://cdn.example/media-only.png"],
+      },
+      context: {
+        channelId: "discord",
+        accountId: "account-7",
+        conversationId: "conversation-8",
+        sessionKey: "session-8",
+      },
+    }),
+    [
+      `session|session-8|1717171725000|user-7|${emptyContentHash}`,
+      `conversation|discord|account-7|conversation-8|1717171725000|${emptyContentHash}`,
+    ],
+  );
+});

@@ -241,70 +241,71 @@ function resolveReceivedAt(timestamp, clock) {
   return { timestampMs: fallbackMs, iso: date.toISOString() };
 }
 
+function resolveCoreFields(event, context, metadata = {}) {
+  const metadataSender = isPlainObject(metadata.sender) ? metadata.sender : {};
+
+  return {
+    channel: nullableString(
+      firstNonEmpty(context.channelId, event.channel, event.channelId),
+    ),
+    accountId:
+      nullableString(firstNonEmpty(context.accountId, event.accountId)) ?? "default",
+    conversationId: nullableString(
+      firstNonEmpty(
+        context.conversationId,
+        event.conversationId,
+        metadata.originatingTo,
+        event.from,
+      ),
+    ),
+    sessionKey: nullableString(firstNonEmpty(context.sessionKey, event.sessionKey)),
+    senderId: nullableString(
+      firstNonEmpty(
+        event.senderId,
+        event.sender?.id,
+        context.senderId,
+        metadata.senderId,
+        metadataSender.id,
+        event.from,
+      ),
+    ),
+    text:
+      nullableString(
+        firstNonEmpty(
+          event.content,
+          event.text,
+          event.bodyForAgent,
+          event.body,
+          event.transcript,
+        ),
+      ) ?? "",
+  };
+}
+
 export function buildCorrelationKeys({ event = {}, context = {} } = {}) {
   const sourceEvent = event ?? {};
   const sourceContext = context ?? {};
-  const channel = nullableString(
-    firstNonEmpty(sourceEvent.channel, sourceEvent.channelId, sourceContext.channelId),
-  );
-  const accountId =
-    nullableString(firstNonEmpty(sourceEvent.accountId, sourceContext.accountId)) ??
-    "default";
-  const conversationId = nullableString(
-    firstNonEmpty(
-      sourceEvent.conversationId,
-      sourceContext.conversationId,
-      sourceEvent.from,
-    ),
-  );
-  const sessionKey = nullableString(
-    firstNonEmpty(sourceEvent.sessionKey, sourceContext.sessionKey),
-  );
+  const metadata = buildMetadata(sourceEvent, sourceContext);
+  const { channel, accountId, conversationId, sessionKey, senderId, text } =
+    resolveCoreFields(sourceEvent, sourceContext, metadata);
   const messageId = nullableString(
     firstNonEmpty(sourceEvent.messageId, sourceContext.messageId),
-  );
-  const senderId = nullableString(
-    firstNonEmpty(
-      sourceEvent.senderId,
-      sourceEvent.sender?.id,
-      sourceContext.senderId,
-      sourceEvent.from,
-    ),
   );
   const timestamp = normalizeTimestamp(
     firstNonEmpty(sourceEvent.timestamp, sourceEvent.receivedAt),
   );
-  const content = nullableString(
-    firstNonEmpty(
-      sourceEvent.content,
-      sourceEvent.text,
-      sourceEvent.bodyForAgent,
-      sourceEvent.body,
-      sourceEvent.transcript,
-    ),
-  );
-  const contentHash = content === null ? null : sha256(content);
+  const contentHash = sha256(text);
   const keys = [];
 
   if (channel !== null && messageId !== null) {
     keys.push(`exact|${channel}|${accountId}|${messageId}`);
   }
 
-  if (
-    sessionKey !== null &&
-    timestamp !== null &&
-    senderId !== null &&
-    contentHash !== null
-  ) {
+  if (sessionKey !== null && timestamp !== null && senderId !== null) {
     keys.push(`session|${sessionKey}|${timestamp}|${senderId}|${contentHash}`);
   }
 
-  if (
-    channel !== null &&
-    conversationId !== null &&
-    timestamp !== null &&
-    contentHash !== null
-  ) {
+  if (channel !== null && conversationId !== null && timestamp !== null) {
     keys.push(
       `conversation|${channel}|${accountId}|${conversationId}|${timestamp}|${contentHash}`,
     );
@@ -329,46 +330,13 @@ export function normalizeInboundEvent(options = {}) {
     split.context,
   );
   const metadata = buildMetadata(enrichedEvent, enrichedContext);
-  const channel = nullableString(
-    firstNonEmpty(enrichedContext.channelId, enrichedEvent.channel, enrichedEvent.channelId),
-  );
-  const accountId =
-    nullableString(firstNonEmpty(enrichedContext.accountId, enrichedEvent.accountId)) ??
-    "default";
-  const conversationId = nullableString(
-    firstNonEmpty(
-      enrichedContext.conversationId,
-      enrichedEvent.conversationId,
-      metadata.originatingTo,
-      enrichedEvent.from,
-    ),
-  );
-  const sessionKey = nullableString(
-    firstNonEmpty(enrichedContext.sessionKey, enrichedEvent.sessionKey),
-  );
+  const { channel, accountId, conversationId, sessionKey, senderId, text } =
+    resolveCoreFields(enrichedEvent, enrichedContext, metadata);
   const messageId = nullableString(
     firstNonEmpty(enrichedEvent.messageId, enrichedContext.messageId),
   );
   const metadataSender = isPlainObject(metadata.sender) ? metadata.sender : {};
-  const senderId = nullableString(
-    firstNonEmpty(
-      enrichedEvent.senderId,
-      enrichedContext.senderId,
-      metadata.senderId,
-      metadataSender.id,
-      enrichedEvent.from,
-    ),
-  );
   const { timestampMs, iso: receivedAt } = resolveReceivedAt(enrichedEvent.timestamp, clock);
-  const text =
-    nullableString(
-      firstNonEmpty(
-        enrichedEvent.content,
-        enrichedEvent.bodyForAgent,
-        enrichedEvent.body,
-        enrichedEvent.transcript,
-      ),
-    ) ?? "";
   const explicitIsGroup = firstNonEmpty(enrichedEvent.isGroup, metadata.isGroup);
 
   return {

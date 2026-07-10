@@ -144,6 +144,72 @@ test("CorrelationBuffer evicts the oldest record when the bound is exceeded", ()
   assert.equal(buffer.take(newest), newest);
 });
 
+test("CorrelationBuffer clears all old aliases when a new record reuses one alias", () => {
+  let now = 50_000;
+  const buffer = new CorrelationBuffer({
+    ttlMs: 10_000,
+    maxEntries: 10,
+    now: () => now,
+  });
+  const oldRecord = {
+    event: {
+      channel: "discord",
+      accountId: "account-5",
+      conversationId: "conversation-old",
+      sessionKey: "session-shared",
+      messageId: "message-old",
+      senderId: "user-shared",
+      timestamp: 50_000,
+      content: "shared content",
+    },
+    context: {},
+  };
+  const newRecord = {
+    event: {
+      channel: "discord",
+      accountId: "account-5",
+      conversationId: "conversation-new",
+      sessionKey: "session-shared",
+      messageId: "message-new",
+      senderId: "user-shared",
+      timestamp: 50_000,
+      content: "shared content",
+    },
+    context: {},
+  };
+
+  buffer.capture(oldRecord);
+  now += 1;
+  buffer.capture(newRecord);
+
+  assert.equal(
+    buffer.take({
+      event: {
+        channel: "discord",
+        accountId: "account-5",
+        messageId: "message-old",
+      },
+      context: {},
+    }),
+    null,
+  );
+  assert.equal(
+    buffer.take({
+      event: {
+        channel: "discord",
+        accountId: "account-5",
+        conversationId: "conversation-old",
+        timestamp: 50_000,
+        content: "shared content",
+      },
+      context: {},
+    }),
+    null,
+  );
+  assert.equal(buffer.take(newRecord), newRecord);
+  assert.equal(buffer.size, 0);
+});
+
 test("CorrelationBuffer requires positive integer TTL and entry bounds", () => {
   const valid = { ttlMs: 1, maxEntries: 1, now: () => 0 };
 
