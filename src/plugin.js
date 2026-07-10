@@ -8,6 +8,8 @@ const DEFAULT_CONFIG = Object.freeze({
   links: [],
   correlationTtlMs: 30_000,
   maxCorrelationEntries: 10_000,
+  ackTtlMs: 300_000,
+  failedTtlMs: 86_400_000,
   deliveryPollMs: 1_000,
   deliveryMaxAttempts: 5,
   deliveryLeaseMs: 60_000,

@@ -320,6 +320,69 @@ test("ACK pruning cannot delete an event that still owns delivery or receipt sta
   store.close();
 });
 
+test("prunes expired terminal delivery relations before their ACK tombstone", () => {
+  let now = 10_000;
+  const store = new EventStore(":memory:", { now: () => now });
+  store.enqueue(EVENT, { deliveries: [jobsFor()[0]] });
+  const claimed = store.claimNextDelivery({
+    nowMs: now,
+    leaseMs: 1_000,
+    leaseToken: "retention-lease",
+  });
+  store.completeDelivery(claimed.id, {
+    leaseToken: "retention-lease",
+    messageId: "provider-retained",
+    completedAtMs: now,
+  });
+  store.ack(EVENT.id, { ackedAtMs: now });
+  now += 1_000;
+
+  assert.deepEqual(store.prune({ ackTtlMs: 1_000, failedTtlMs: 2_000 }), {
+    acked: 1,
+    failed: 0,
+  });
+  assert.equal(store.findDeliveryByMarker(claimed.id), undefined);
+  assert.deepEqual(store.deliveryCounts(), {
+    pending: 0,
+    sending: 0,
+    sent: 0,
+    failed: 0,
+  });
+  store.close();
+});
+
+test("prunes expired terminal delivery relations before their failed tombstone", () => {
+  let now = 10_000;
+  const store = new EventStore(":memory:", { now: () => now });
+  store.enqueue(EVENT, { deliveries: [jobsFor()[0]] });
+  const claimed = store.claimNextDelivery({
+    nowMs: now,
+    leaseMs: 1_000,
+    leaseToken: "failed-retention-lease",
+  });
+  store.retryDelivery(claimed.id, {
+    leaseToken: "failed-retention-lease",
+    code: "DELIVERY_FAILED",
+    nextAttemptAtMs: now,
+    maxAttempts: 1,
+  });
+  store.fail(EVENT.id, { code: "EVENT_FAILED", failedAtMs: now });
+  now += 2_000;
+
+  assert.deepEqual(store.prune({ ackTtlMs: 1_000, failedTtlMs: 2_000 }), {
+    acked: 0,
+    failed: 1,
+  });
+  assert.equal(store.findDeliveryByMarker(claimed.id), undefined);
+  assert.deepEqual(store.deliveryCounts(), {
+    pending: 0,
+    sending: 0,
+    sent: 0,
+    failed: 0,
+  });
+  store.close();
+});
+
 test("receipt lookup stays scoped to channel, account, and conversation", () => {
   const store = new EventStore(":memory:", { now: () => 1_000 });
   const makeDelivery = (event, conversationId, endpointId) => ({

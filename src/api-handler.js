@@ -176,6 +176,12 @@ export function createApiHandler({
           openclawVersion,
           database: snapshot.status === "ok" ? "ok" : "degraded",
           pending: store.pendingCount(),
+          deliveries: store.deliveryCounts?.() ?? {
+            pending: 0,
+            sending: 0,
+            sent: 0,
+            failed: 0,
+          },
         }, statusCode);
         return;
       }

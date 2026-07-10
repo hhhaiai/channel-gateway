@@ -56,6 +56,8 @@ export function createBridgeRuntime({
   now = Date.now,
   correlationTtlMs = 30_000,
   maxCorrelationEntries = 10_000,
+  ackTtlMs = 300_000,
+  failedTtlMs = 86_400_000,
   deliveryPollMs = 1_000,
   deliveryMaxAttempts = 5,
   deliveryLeaseMs = 60_000,
@@ -67,6 +69,8 @@ export function createBridgeRuntime({
   openclawVersion = "2026.6.11",
   httpHandler,
   eventPublisher,
+  setIntervalFn = setInterval,
+  clearIntervalFn = clearInterval,
 }) {
   store ??= databasePath ? new EventStore(databasePath, { now }) : undefined;
   if (!store) {
@@ -100,6 +104,7 @@ export function createBridgeRuntime({
     : undefined;
   let closed = false;
   let closePromise;
+  let maintenanceTimer;
 
   const publish = (event) => publisher?.publish?.(event);
   store.on?.("pending", publish);
@@ -178,7 +183,20 @@ export function createBridgeRuntime({
       return false;
     }
     worker?.start();
-    return Boolean(worker);
+    if (!maintenanceTimer && typeof store.prune === "function") {
+      maintenanceTimer = setIntervalFn(() => {
+        try {
+          store.prune({ ackTtlMs, failedTtlMs });
+          health.recover();
+        } catch (error) {
+          const code = controlledCode(error?.code, "RETENTION_FAILED");
+          health.degrade(code);
+          logger.error?.({ component: "channel-gateway", code });
+        }
+      }, 60_000);
+      maintenanceTimer?.unref?.();
+    }
+    return Boolean(worker || maintenanceTimer);
   }
 
   function close() {
@@ -188,6 +206,10 @@ export function createBridgeRuntime({
     closed = true;
     closePromise = (async () => {
       await worker?.stop();
+      if (maintenanceTimer) {
+        clearIntervalFn(maintenanceTimer);
+        maintenanceTimer = undefined;
+      }
       store.off?.("pending", publish);
       await publisher?.close?.();
       store.close?.();

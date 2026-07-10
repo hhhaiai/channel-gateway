@@ -338,24 +338,46 @@ export class EventStore extends EventEmitter {
     positiveInteger("failedTtlMs", failedTtlMs);
     finiteInteger("nowMs", nowMs);
 
-    const protectedByDelivery = `
-      AND NOT EXISTS (
-        SELECT 1 FROM deliveries WHERE deliveries.event_id = events.id
-      )`;
-    const acked = this.database
-      .prepare(
-        `DELETE FROM events
-         WHERE status = 'acked' AND acked_at_ms IS NOT NULL AND acked_at_ms <= ?
-         ${protectedByDelivery}`,
-      )
-      .run(nowMs - ackTtlMs).changes;
-    const failed = this.database
-      .prepare(
-        `DELETE FROM events
-         WHERE status = 'failed' AND failed_at_ms IS NOT NULL AND failed_at_ms <= ?
-         ${protectedByDelivery}`,
-      )
-      .run(nowMs - failedTtlMs).changes;
+    let acked = 0;
+    let failed = 0;
+    this.#transaction(() => {
+      this.database
+        .prepare(
+          `DELETE FROM deliveries
+           WHERE status IN ('sent', 'failed')
+             AND EXISTS (
+               SELECT 1 FROM events
+               WHERE events.id = deliveries.event_id
+                 AND (
+                   (events.status = 'acked' AND events.acked_at_ms IS NOT NULL
+                     AND events.acked_at_ms <= ?)
+                   OR
+                   (events.status = 'failed' AND events.failed_at_ms IS NOT NULL
+                     AND events.failed_at_ms <= ?)
+                 )
+             )`,
+        )
+        .run(nowMs - ackTtlMs, nowMs - failedTtlMs);
+
+      const protectedByDelivery = `
+        AND NOT EXISTS (
+          SELECT 1 FROM deliveries WHERE deliveries.event_id = events.id
+        )`;
+      acked = this.database
+        .prepare(
+          `DELETE FROM events
+           WHERE status = 'acked' AND acked_at_ms IS NOT NULL AND acked_at_ms <= ?
+           ${protectedByDelivery}`,
+        )
+        .run(nowMs - ackTtlMs).changes;
+      failed = this.database
+        .prepare(
+          `DELETE FROM events
+           WHERE status = 'failed' AND failed_at_ms IS NOT NULL AND failed_at_ms <= ?
+           ${protectedByDelivery}`,
+        )
+        .run(nowMs - failedTtlMs).changes;
+    });
 
     return { acked: Number(acked), failed: Number(failed) };
   }

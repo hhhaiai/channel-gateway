@@ -111,6 +111,65 @@ test("cannot restart the delivery worker after runtime close", async () => {
   assert.equal(runtime.worker.started, false);
 });
 
+test("runs and clears periodic terminal-state retention", async () => {
+  const timers = [];
+  const cleared = [];
+  const runtime = createBridgeRuntime({
+    databasePath: ":memory:",
+    links: [],
+    logger: silentLogger,
+    ackTtlMs: 1_000,
+    failedTtlMs: 2_000,
+    setIntervalFn(callback, delay) {
+      const timer = { callback, delay };
+      timers.push(timer);
+      return timer;
+    },
+    clearIntervalFn(timer) {
+      cleared.push(timer);
+    },
+  });
+  const calls = [];
+  runtime.store.prune = (options) => calls.push(options);
+
+  assert.equal(runtime.start(), true);
+  assert.equal(timers[0].delay, 60_000);
+  timers[0].callback();
+  assert.deepEqual(calls, [{ ackTtlMs: 1_000, failedTtlMs: 2_000 }]);
+
+  await runtime.close();
+  assert.deepEqual(cleared, [timers[0]]);
+});
+
+test("recovers health after a transient retention failure", async () => {
+  const timers = [];
+  const runtime = createBridgeRuntime({
+    databasePath: ":memory:",
+    links: [],
+    logger: silentLogger,
+    setIntervalFn(callback) {
+      const timer = { callback };
+      timers.push(timer);
+      return timer;
+    },
+  });
+  let attempts = 0;
+  runtime.store.prune = () => {
+    attempts += 1;
+    if (attempts === 1) {
+      throw Object.assign(new Error("temporary lock"), { code: "SQLITE_BUSY" });
+    }
+  };
+
+  runtime.start();
+  timers[0].callback();
+  assert.deepEqual(runtime.health.snapshot().status, "degraded");
+  timers[0].callback();
+  assert.deepEqual(runtime.health.snapshot(), { status: "ok" });
+
+  await runtime.close();
+});
+
 test("correlates rich ingress and atomically creates a cross-channel delivery", () => {
   const runtime = createBridgeRuntime({
     databasePath: ":memory:",

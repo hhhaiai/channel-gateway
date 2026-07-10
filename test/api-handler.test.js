@@ -96,6 +96,7 @@ test("reports healthy and degraded readiness", async (t) => {
       openclawVersion: "2026.6.11",
       database: "ok",
       pending: 0,
+      deliveries: { pending: 0, sending: 0, sent: 0, failed: 0 },
     },
   });
 
