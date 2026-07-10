@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { realpath, readFile, mkdir, writeFile } from "node:fs/promises";
+import { lstat, realpath, readFile, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -39,8 +39,8 @@ function selectedPackagePath(sourcePath) {
   return normalized === "node_modules" || normalized.startsWith(`node_modules${path.sep}`);
 }
 
-function normalizeLicense(metadata, locked) {
-  const candidate = metadata.license ?? locked.license;
+function normalizeLicense(metadata) {
+  const candidate = metadata.license;
   if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
   if (Array.isArray(metadata.licenses)) {
     const values = metadata.licenses
@@ -58,6 +58,34 @@ function classify(license) {
   return "allowed";
 }
 
+const CLASSIFICATION_RANK = Object.freeze({
+  allowed: 0,
+  "manual-review": 1,
+  blocker: 2,
+});
+
+function stricterLicense(locked, installed) {
+  const candidates = [normalizeLicense(locked), normalizeLicense(installed)]
+    .map((license) => ({ license, classification: classify(license) }));
+  return candidates.reduce((strictest, candidate) =>
+    CLASSIFICATION_RANK[candidate.classification] > CLASSIFICATION_RANK[strictest.classification]
+      ? candidate
+      : strictest);
+}
+
+function supportsCurrentPlatform(osList) {
+  if (!Array.isArray(osList) || osList.length === 0) return true;
+  const values = osList.filter((value) => typeof value === "string");
+  if (values.includes(`!${process.platform}`)) return false;
+  const positive = values.filter((value) => !value.startsWith("!"));
+  return positive.length === 0 || positive.includes(process.platform);
+}
+
+function missingLockedPackageIsAllowed(locked) {
+  return locked.optional === true || locked.dev === true || locked.devOptional === true ||
+    !supportsCurrentPlatform(locked.os);
+}
+
 export async function generateLicenseReport({ root, output }) {
   const rootReal = await realpath(root);
   const lock = JSON.parse(await readFile(path.join(rootReal, "package-lock.json"), "utf8"));
@@ -69,16 +97,44 @@ export async function generateLicenseReport({ root, output }) {
   for (const [sourcePath, locked] of Object.entries(lock.packages)) {
     if (!selectedPackagePath(sourcePath)) continue;
     const packageDirectory = path.resolve(rootReal, sourcePath);
-    if (!inside(rootReal, packageDirectory)) continue;
+    if (!inside(rootReal, packageDirectory)) {
+      throw new Error(`locked package path escapes dependency root: ${sourcePath}`);
+    }
+
+    let packageEntry;
+    try {
+      packageEntry = await lstat(packageDirectory);
+    } catch (error) {
+      if (error?.code === "ENOENT") {
+        if (missingLockedPackageIsAllowed(locked)) continue;
+        throw new Error(`required locked package is missing: ${sourcePath}`);
+      }
+      throw error;
+    }
+    if (packageEntry.isSymbolicLink()) {
+      throw new Error(`package directory must not be a symbolic link: ${sourcePath}`);
+    }
+    if (!packageEntry.isDirectory()) {
+      throw new Error(`locked package path must be a directory: ${sourcePath}`);
+    }
 
     let packageReal;
     let metadata;
     try {
       packageReal = await realpath(packageDirectory);
-      if (!inside(rootReal, packageReal)) continue;
-      metadata = JSON.parse(await readFile(path.join(packageReal, "package.json"), "utf8"));
+      if (!inside(rootReal, packageReal)) {
+        throw new Error(`package directory resolves outside dependency root: ${sourcePath}`);
+      }
+      const packageJsonPath = path.join(packageReal, "package.json");
+      const packageJsonEntry = await lstat(packageJsonPath);
+      if (packageJsonEntry.isSymbolicLink()) {
+        throw new Error(`package.json must not be a symbolic link: ${sourcePath}`);
+      }
+      metadata = JSON.parse(await readFile(packageJsonPath, "utf8"));
     } catch (error) {
-      if (error?.code === "ENOENT") continue;
+      if (error?.code === "ENOENT") {
+        throw new Error(`installed package metadata is missing: ${sourcePath}`);
+      }
       throw error;
     }
 
@@ -90,13 +146,13 @@ export async function generateLicenseReport({ root, output }) {
     const version = typeof metadata.version === "string" && metadata.version.trim()
       ? metadata.version.trim()
       : typeof locked.version === "string" ? locked.version : null;
-    const license = normalizeLicense(metadata, locked);
+    const { license, classification } = stricterLicense(locked, metadata);
     packages.push({
       name,
       version,
       license,
       sourcePath: sourcePath.split(path.sep).join("/"),
-      classification: classify(license),
+      classification,
     });
   }
 

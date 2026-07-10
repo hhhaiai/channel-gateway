@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=22.19.0"
+    "node": ">=22.22.2 <23"
   },
   "bin": {
     "channel-gateway": "./bin/channel-gateway.js"

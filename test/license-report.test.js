@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -120,4 +120,70 @@ test("strict mode exits nonzero only when blockers exist", async (t) => {
   const reviewResult = run(reviewOnly, path.join(reviewOnly, "licenses.json"), true);
   assert.equal(reviewResult.status, 0, reviewResult.stderr);
   assert.match(reviewResult.stdout, /manual-review: review/);
+});
+
+test("fails closed when a required locked package is missing from the install tree", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "channel-gateway-missing-required-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(path.join(root, "package-lock.json"), JSON.stringify({
+    lockfileVersion: 3,
+    packages: {
+      "": { name: "missing-required-fixture", version: "1.0.0" },
+      "node_modules/required": { version: "1.0.0", license: "MIT" },
+      "node_modules/optional": { version: "1.0.0", license: "MIT", optional: true },
+      "node_modules/dev-only": { version: "1.0.0", license: "MIT", dev: true },
+      "node_modules/other-platform": {
+        version: "1.0.0",
+        license: "MIT",
+        os: [process.platform === "linux" ? "darwin" : "linux"],
+      },
+    },
+  }));
+
+  const result = run(root, path.join(root, "licenses.json"));
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /required locked package is missing: node_modules\/required/);
+  assert.doesNotMatch(result.stderr, /optional|dev-only|other-platform/);
+});
+
+test("rejects a package-directory symlink even when it stays inside the selected root", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "channel-gateway-symlink-package-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writePackage(root, "packages/shared", {
+    name: "shared", version: "1.0.0", license: "MIT",
+  });
+  await mkdir(path.join(root, "node_modules"), { recursive: true });
+  await symlink(path.join(root, "packages/shared"), path.join(root, "node_modules/shared"));
+  await writeFile(path.join(root, "package-lock.json"), JSON.stringify({
+    lockfileVersion: 3,
+    packages: {
+      "": { name: "symlink-fixture", version: "1.0.0" },
+      "node_modules/shared": { version: "1.0.0", license: "MIT" },
+    },
+  }));
+
+  const result = run(root, path.join(root, "licenses.json"));
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /package directory must not be a symbolic link: node_modules\/shared/);
+});
+
+test("uses the stricter classification across lock and installed metadata", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "channel-gateway-license-conflict-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writePackage(root, "node_modules/conflict", {
+    name: "conflict", version: "1.0.0", license: "MIT",
+  });
+  await writeFile(path.join(root, "package-lock.json"), JSON.stringify({
+    lockfileVersion: 3,
+    packages: {
+      "": { name: "conflict-fixture", version: "1.0.0" },
+      "node_modules/conflict": { version: "1.0.0", license: "UNLICENSED" },
+    },
+  }));
+
+  const result = run(root, path.join(root, "licenses.json"));
+  assert.equal(result.status, 0, result.stderr);
+  const report = JSON.parse(await readFile(path.join(root, "licenses.json"), "utf8"));
+  assert.equal(report.packages[0].license, "UNLICENSED");
+  assert.equal(report.packages[0].classification, "blocker");
 });

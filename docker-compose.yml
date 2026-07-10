@@ -6,6 +6,7 @@ services:
         CHANNEL_PROFILE: ${CHANNEL_PROFILE:-base}
     image: channel-gateway:${CHANNEL_PROFILE:-base}
     restart: unless-stopped
+    read_only: true
     environment:
       CHANNEL_GATEWAY_DATA_DIR: /data
       CHANNEL_GATEWAY_BIND: lan
@@ -19,6 +20,9 @@ services:
       - channel-gateway-state:/data/state
       - channel-gateway-credentials:/data/credentials
       - channel-gateway-workspace:/data/workspace
+    tmpfs:
+      - /data:rw,nosuid,nodev,noexec,size=1m,mode=0700,uid=1000,gid=1000
+      - /tmp:rw,nosuid,nodev,noexec,size=64m,mode=1777
     healthcheck:
       test:
         - CMD

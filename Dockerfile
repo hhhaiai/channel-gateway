@@ -24,18 +24,17 @@ ENV NODE_ENV=production \
     CHANNEL_GATEWAY_PORT=18789
 WORKDIR /app
 
-COPY --from=dependencies --chown=node:node /app/node_modules ./node_modules
-COPY --chown=node:node package.json package-lock.json index.js openclaw.plugin.json ./
-COPY --chown=node:node bin ./bin
-COPY --chown=node:node src ./src
-COPY --chown=node:node scripts ./scripts
-COPY --chown=node:node patches ./patches
-COPY --chown=node:node licenses ./licenses
+COPY --from=dependencies /app/node_modules ./node_modules
+COPY package.json package-lock.json index.js openclaw.plugin.json ./
+COPY bin ./bin
+COPY src ./src
+COPY scripts ./scripts
+COPY patches ./patches
+COPY licenses ./licenses
 
 RUN mkdir -p /data/config /data/state /data/credentials /data/workspace \
  && chown -R node:node /data
 
 USER node
 EXPOSE 18789
-VOLUME ["/data"]
 CMD ["node", "bin/channel-gateway.js"]
