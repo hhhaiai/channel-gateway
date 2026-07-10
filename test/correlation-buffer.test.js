@@ -210,6 +210,40 @@ test("CorrelationBuffer clears all old aliases when a new record reuses one alia
   assert.equal(buffer.size, 0);
 });
 
+test("CorrelationBuffer prunes later records that expire first after a clock rollback", () => {
+  let now = 60_000;
+  const buffer = new CorrelationBuffer({
+    ttlMs: 1_000,
+    maxEntries: 10,
+    now: () => now,
+  });
+  const first = {
+    event: {
+      channel: "slack",
+      accountId: "account-6",
+      messageId: "message-clock-first",
+    },
+    context: {},
+  };
+  const second = {
+    event: {
+      channel: "slack",
+      accountId: "account-6",
+      messageId: "message-clock-second",
+    },
+    context: {},
+  };
+
+  buffer.capture(first);
+  now = 59_000;
+  buffer.capture(second);
+  now = 60_500;
+
+  assert.equal(buffer.size, 1);
+  assert.equal(buffer.take(second), null);
+  assert.equal(buffer.take(first), first);
+});
+
 test("CorrelationBuffer requires positive integer TTL and entry bounds", () => {
   const valid = { ttlMs: 1, maxEntries: 1, now: () => 0 };
 
