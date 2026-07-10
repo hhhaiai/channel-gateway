@@ -9,7 +9,7 @@
 1. 无需配置 LLM/provider 凭据即可启动和处理 Channel 消息。
 2. 一个进程可同时管理多个 Channel 和多个账户。
 3. 入站消息在交给业务消费者前持久化，支持重启恢复和显式 ACK。
-4. 出站消息复用 OpenClaw 的统一 `send` Gateway RPC，保留媒体、线程、回复、静默发送和幂等能力。
+4. 出站消息复用 OpenClaw 的统一 `send` Gateway RPC，保留媒体、线程、回复和静默发送能力；逻辑 delivery 在本地幂等，平台发送语义明确为 at-least-once。
 5. Channel 连接、配对、安全策略和重试仍由其官方插件负责。
 6. OpenClaw Host 与 Channel 插件固定为同一版本并原子升级。
 7. 可以把不同软件中的群聊或私聊加入同一个互通组；任一端的消息会自动、持久化地
@@ -235,7 +235,13 @@ delivery 状态：
 - `failed`：超过最大重试次数，保留可诊断的错误码。
 
 delivery id 和 `idempotencyKey` 由 `event id + link id + destination endpoint id` 确定；
-进程崩溃或重启不会产生第二条逻辑转发。
+进程崩溃或重启不会产生第二条本地逻辑转发。OpenClaw 的 send dedupe 仅存在于进程内，
+因此 provider 已接收但 receipt 尚未写入时崩溃，恢复后可能重复发送；服务保证 at-least-once，
+不宣称跨平台 exactly-once。
+
+`sending` 使用 `lease_token + lease_until_ms`，只有租约过期后才可被另一个 worker 回收；
+complete/retry 必须携带原 lease token 做 compare-and-set。失败重试至少等待固定 Host 的
+5 分钟 dedupe failure cache 过期，避免同 key 快速重试只重复读取缓存失败。
 
 Bridge hook 本身不具备 authenticated HTTP request scope，不能直接使用
 `gateway-method-runtime`。后台 worker 因而通过 loopback、Bearer-authenticated
@@ -277,10 +283,13 @@ Bridge 使用自己的 `channel-gateway.sqlite`，避免依赖仅向 bundled/tru
 - 每行同时保存公开 event id 和内部单调递增 `seq`；`after` 使用 event id 定位其 `seq`。
 - SSE 每次连接都优先重放所有未 ACK 事件。`Last-Event-ID` 仅作为已观察高水位，不能跳过
   更早但仍 pending 的事件。
-- ACK 产生 tombstone；定期按 TTL 清理 acked/failed rows。
-- SQLite 使用 WAL、busy timeout、参数化查询和单写入队列。
+- ACK 产生 tombstone；没有 delivery relation 的 acked/failed rows 可按 TTL 清理。拥有
+  pending/sending/sent/failed delivery 或 receipt 的 event 暂不自动清理，避免丢转发与回环关系。
+- SQLite 使用 WAL、1 秒 busy timeout、参数化查询和单写入事务。
 - 同一数据库还保存 link delivery outbox 和 receipt relation；事件 enqueue 与 delivery
   创建必须原子提交。
+- 自动 fan-out 的媒体批量发送在当前 Host 只能返回最后一个 receipt，部分成功也无法完整
+  对账；因此相关路径仅提供 at-least-once，不能宣称所有媒体子消息均具备完整 reply/echo 关系。
 
 ## 8. HTTP API
 

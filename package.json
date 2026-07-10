@@ -19,6 +19,7 @@
   },
   "optionalDependencies": {
     "@openclaw/discord": "2026.6.11",
+    "@openclaw/feishu": "2026.6.11",
     "@openclaw/slack": "2026.6.11",
     "@openclaw/whatsapp": "2026.6.11"
   },
@@ -28,4 +29,3 @@
     ]
   }
 }
-

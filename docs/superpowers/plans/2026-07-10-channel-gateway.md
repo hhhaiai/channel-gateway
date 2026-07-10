@@ -370,7 +370,7 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS events_status_seq ON events(status, seq);
 ```
 
-Constructor initialization must set `journal_mode=WAL`, `busy_timeout=5000`, and `foreign_keys=ON`. `enqueue()` uses `BEGIN IMMEDIATE` and merges a duplicate payload with `mergeNonEmpty` without changing an existing terminal status. `listPending()` returns `{ items, nextAfter }` and resolves `after` through the row's internal `seq`. `ack()` retains a tombstone. `prune()` deletes only terminal rows older than their configured TTL. Emit `pending` only after commit.
+Constructor initialization must set `journal_mode=WAL`, `busy_timeout=1000`, and `foreign_keys=ON`. `enqueue()` uses `BEGIN IMMEDIATE` and merges a duplicate payload with `mergeNonEmpty` without changing an existing terminal status. `listPending()` returns `{ items, nextAfter }` and resolves `after` through the row's internal `seq`. `ack()` retains a tombstone. `prune()` deletes only terminal rows older than their configured TTL and never deletes rows that still own delivery/receipt state. Emit `pending` only after commit.
 
 Run: `node --test test/event-store.test.js`
 Expected: PASS.
@@ -488,16 +488,16 @@ Extend the store test setup and assert event + jobs are atomic:
 const jobs = planFanout({ event: EVENT, links, replyTargets: new Map() });
 store.enqueue(EVENT, { deliveries: jobs });
 assert.equal(store.deliveryCounts().pending, 3);
-const claimed = store.claimNextDelivery({ nowMs: 1_000 });
+const claimed = store.claimNextDelivery({ nowMs: 1_000, leaseToken: "lease-1" });
 assert.equal(claimed.status, "sending");
-store.completeDelivery(claimed.id, { messageId: "feishu-message-1", completedAtMs: 1_001 });
+store.completeDelivery(claimed.id, { leaseToken: claimed.leaseToken, messageId: "feishu-message-1", completedAtMs: 1_001 });
 assert.equal(store.findEcho({ channel: "feishu", accountId: "default", conversationId: "oc_chat", messageId: "feishu-message-1" }).eventId, EVENT.id);
 ```
 
 Add cases for:
 
 - duplicate enqueue does not duplicate jobs;
-- reopening resets stale `sending` jobs to `pending`;
+- two stores cannot reclaim an unexpired lease; an expired lease can be recovered and stale tokens cannot complete it;
 - `retryDelivery()` increments attempts, sets `nextAttemptAtMs`, and becomes `failed` at max attempts;
 - claim order uses due time then insertion order;
 - a reply to a destination receipt resolves per-endpoint reply ids: original source message id for
@@ -513,8 +513,9 @@ Use the same database and transaction owner as events:
 
 ```sql
 CREATE TABLE IF NOT EXISTS deliveries (
-  id TEXT PRIMARY KEY,
-  event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+  id TEXT NOT NULL UNIQUE,
+  event_id TEXT NOT NULL REFERENCES events(id) ON DELETE RESTRICT,
   link_id TEXT NOT NULL,
   source_endpoint_id TEXT NOT NULL,
   destination_endpoint_id TEXT NOT NULL,
@@ -522,23 +523,26 @@ CREATE TABLE IF NOT EXISTS deliveries (
   destination_account_id TEXT NOT NULL,
   destination_conversation_id TEXT NOT NULL,
   request_json TEXT NOT NULL,
-  marker TEXT NOT NULL UNIQUE,
   status TEXT NOT NULL CHECK (status IN ('pending','sending','sent','failed')),
   attempts INTEGER NOT NULL DEFAULT 0,
   next_attempt_at_ms INTEGER NOT NULL,
+  lease_token TEXT,
+  lease_until_ms INTEGER,
   receipt_message_id TEXT,
   error_code TEXT,
   created_at_ms INTEGER NOT NULL,
-  updated_at_ms INTEGER NOT NULL
+  updated_at_ms INTEGER NOT NULL,
+  UNIQUE(event_id, link_id, destination_endpoint_id)
 );
-CREATE INDEX IF NOT EXISTS deliveries_due ON deliveries(status, next_attempt_at_ms, created_at_ms);
-CREATE INDEX IF NOT EXISTS deliveries_receipt ON deliveries(destination_channel, destination_account_id, destination_conversation_id, receipt_message_id);
+CREATE INDEX IF NOT EXISTS deliveries_due ON deliveries(status, next_attempt_at_ms, lease_until_ms, seq);
+CREATE UNIQUE INDEX IF NOT EXISTS deliveries_receipt ON deliveries(destination_channel, destination_account_id, destination_conversation_id, receipt_message_id) WHERE receipt_message_id IS NOT NULL;
 ```
 
 `enqueue(event, { deliveries })` must commit the event and jobs together. Implement
 `claimNextDelivery`, `completeDelivery`, `retryDelivery`, `deliveryCounts`, `findEcho`, and
-`resolveReplyTargets`. Reset `sending` to `pending` during store initialization. Store only
-controlled error codes, never raw provider/token error text.
+`resolveReplyTargets`. Claim pending work or expired leases by available time then `seq`; complete and
+retry use lease-token compare-and-set. Duplicate enrichment never creates new jobs after the event's
+first transaction. Store only controlled error codes, never raw provider/token error text.
 
 Run: `node --test test/event-store.test.js test/delivery-outbox.test.js`
 Expected: PASS.
@@ -560,8 +564,10 @@ Expected: FAIL because worker/sender modules do not exist.
 
 - [ ] **Step 6: Implement sequential delivery and the authenticated self-call**
 
-`DeliveryWorker` exposes `start()`, `tick()`, and `stop()`. It processes one job at a time, uses
-`Math.min(60_000, 1_000 * 2 ** attempts)` retry delay, and accepts injected clock/timers for tests.
+`DeliveryWorker` exposes `start()`, `tick()`, and `stop()`. It processes one leased job at a time and
+never overlaps ticks. Retry uses bounded exponential backoff but not earlier than 301 seconds so the
+pinned Gateway's five-minute in-memory failure cache cannot consume all attempts without a real
+provider retry. External delivery is at-least-once, not exactly-once.
 `createSelfApiSender()` POSTs JSON to `/api/v1/messages`, uses a 30-second AbortSignal timeout,
 returns the successful payload, and throws a sanitized `{ code, retryable, retryAfterMs }` error.
 It may read the token only at construction; jobs never contain it.
@@ -572,8 +578,8 @@ Expected: PASS.
 - [ ] **Step 7: Extend manifest/package configuration without bundling QQ by default**
 
 Add exact optional `@openclaw/feishu@2026.6.11`. Do not add `@openclaw/qqbot` to default or common
-dependencies. Extend the strict plugin schema with `links`, `deliveryPollMs`, and
-`deliveryMaxAttempts`; endpoint schema requires id/channel/conversationId/to and permits
+dependencies. Extend the strict plugin schema with `links`, `deliveryPollMs`,
+`deliveryMaxAttempts`, and `deliveryLeaseMs`; endpoint schema requires id/channel/conversationId/to and permits
 accountId/receive/send/threadId only.
 
 Run: `npm install --omit=optional && npm test && npm run check`

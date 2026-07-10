@@ -52,6 +52,85 @@
         "type": "integer",
         "minimum": 1,
         "default": 1000
+      },
+      "deliveryPollMs": {
+        "type": "integer",
+        "minimum": 1,
+        "default": 1000
+      },
+      "deliveryMaxAttempts": {
+        "type": "integer",
+        "minimum": 1,
+        "default": 5
+      },
+      "deliveryLeaseMs": {
+        "type": "integer",
+        "minimum": 1000,
+        "default": 60000
+      },
+      "links": {
+        "type": "array",
+        "default": [],
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "endpoints"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "endpoints": {
+              "type": "array",
+              "minItems": 2,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "id",
+                  "channel",
+                  "conversationId",
+                  "to"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "channel": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "accountId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "conversationId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "to": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "receive": {
+                    "type": "boolean"
+                  },
+                  "send": {
+                    "type": "boolean"
+                  },
+                  "threadId": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     }
   }
