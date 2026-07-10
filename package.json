@@ -15,7 +15,10 @@
     "check": "node ./scripts/check.mjs",
     "postinstall": "node ./scripts/patch-openclaw-dist.mjs",
     "patch:openclaw": "node ./scripts/patch-openclaw-dist.mjs",
-    "verify:openclaw-patch": "node ./scripts/patch-openclaw-dist.mjs --verify"
+    "verify:openclaw-patch": "node ./scripts/patch-openclaw-dist.mjs --verify",
+    "licenses": "node ./scripts/license-report.mjs",
+    "licenses:strict": "node ./scripts/license-report.mjs --strict",
+    "sbom": "node -e \"require(\\\"node:fs\\\").mkdirSync(\\\"artifacts\\\",{recursive:true})\" && npm exec --yes --package=@cyclonedx/cyclonedx-npm@6.0.0 -- cyclonedx-npm --package-lock-only --ignore-npm-errors --output-reproducible --validate --output-file artifacts/sbom.cdx.json"
   },
   "dependencies": {
     "openclaw": "2026.6.11"

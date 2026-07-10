@@ -1,0 +1,10 @@
+.git
+.gitignore
+node_modules
+artifacts
+.channel-gateway
+coverage
+*.log
+.DS_Store
+test
+upstream-openclaw

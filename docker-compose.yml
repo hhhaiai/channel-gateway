@@ -1,0 +1,37 @@
+services:
+  channel-gateway:
+    build:
+      context: .
+      args:
+        CHANNEL_PROFILE: ${CHANNEL_PROFILE:-base}
+    image: channel-gateway:${CHANNEL_PROFILE:-base}
+    restart: unless-stopped
+    environment:
+      CHANNEL_GATEWAY_DATA_DIR: /data
+      CHANNEL_GATEWAY_BIND: lan
+      CHANNEL_GATEWAY_PORT: 18789
+      CHANNEL_GATEWAY_TOKEN: ${CHANNEL_GATEWAY_TOKEN:?CHANNEL_GATEWAY_TOKEN must be set}
+      CHANNEL_GATEWAY_PLUGIN_PATHS: ${CHANNEL_GATEWAY_PLUGIN_PATHS:-}
+    ports:
+      - "${CHANNEL_GATEWAY_PORT:-18789}:18789"
+    volumes:
+      - channel-gateway-config:/data/config
+      - channel-gateway-state:/data/state
+      - channel-gateway-credentials:/data/credentials
+      - channel-gateway-workspace:/data/workspace
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:18789/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 30s
+
+volumes:
+  channel-gateway-config:
+  channel-gateway-state:
+  channel-gateway-credentials:
+  channel-gateway-workspace:
