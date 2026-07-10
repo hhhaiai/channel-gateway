@@ -12,5 +12,6 @@ export const PROVIDER_METADATA_FIELDS = Object.freeze([
   "topicName",
   "senderE164",
   "threadParentId",
+  "replyToIdFull",
+  "replyToIsQuote",
 ]);
-

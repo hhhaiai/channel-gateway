@@ -7,6 +7,7 @@ import {
   mergeNonEmpty,
   normalizeInboundEvent,
 } from "../src/event-normalizer.js";
+import { CorrelationBuffer } from "../src/correlation-buffer.js";
 
 function eventIdFor(fingerprint) {
   return `evt_${createHash("sha256").update(fingerprint).digest("hex").slice(0, 32)}`;
@@ -115,15 +116,13 @@ test("normalizeInboundEvent emits the canonical rich inbound DTO", () => {
     threadId: "42",
     replyTo: {
       id: "message-8",
-      idFull: "discord:message-8",
-      body: "Earlier message",
+      text: "Earlier message",
       sender: "Bob",
-      isQuote: true,
     },
     media: [
-      { path: "/tmp/image.png", url: null, type: "image/png" },
-      { path: null, url: "https://cdn.example/file.pdf", type: "application/pdf" },
-      { path: "/tmp/audio.ogg", url: null, type: null },
+      { path: "/tmp/image.png", url: null, mimeType: "image/png" },
+      { path: null, url: "https://cdn.example/file.pdf", mimeType: "application/pdf" },
+      { path: "/tmp/audio.ogg", url: null, mimeType: null },
     ],
     isGroup: true,
     metadata: {
@@ -135,8 +134,10 @@ test("normalizeInboundEvent emits the canonical rich inbound DTO", () => {
       channelName: "general",
       groupId: "guild-1",
       topicName: "launches",
+      replyToIdFull: "discord:message-8",
+      replyToIsQuote: true,
     },
-    receivedAt: 1_717_171_717_000,
+    receivedAt: "2024-05-31T16:08:37.000Z",
   });
 });
 
@@ -161,7 +162,8 @@ test("normalizeInboundEvent preserves millisecond timestamps and keeps exact IDs
     enrichment: { metadata: { retryAttempt: 2 } },
   });
 
-  assert.equal(first.receivedAt, 1_717_171_717_123);
+  assert.equal(first.receivedAt, "2024-05-31T16:08:37.123Z");
+  assert.equal(typeof first.receivedAt, "string");
   assert.equal(first.id, eventIdFor("v1|slack|account-2|message-10"));
   assert.equal(second.id, first.id);
 });
@@ -189,6 +191,140 @@ test("normalizeInboundEvent fingerprints message-less events with conversation c
     ),
   );
   assert.equal(normalized.messageId, null);
+  assert.equal(normalized.receivedAt, "2024-05-31T16:08:38.000Z");
+});
+
+test("normalizeInboundEvent applies defaults and metadata fallbacks without mutating inputs", () => {
+  const event = {
+    metadata: {
+      originatingTo: "conversation-from-metadata",
+      sender: {
+        id: "metadata-user",
+        name: "Metadata Name",
+        username: "metadata-user",
+      },
+      threadId: 77,
+      mediaPaths: ["/tmp/from-metadata.png"],
+      mediaUrls: [null, "https://cdn.example/from-metadata.pdf"],
+      mediaTypes: ["image/png", "application/pdf"],
+      isGroup: true,
+    },
+  };
+  const context = { channelId: "slack" };
+  const eventSnapshot = structuredClone(event);
+  const contextSnapshot = structuredClone(context);
+  const fixedNow = 1_700_000_000_000;
+  const contentHash = createHash("sha256").update("").digest("hex");
+
+  const normalized = normalizeInboundEvent({
+    event,
+    context,
+    now: () => fixedNow,
+  });
+
+  assert.equal(normalized.accountId, "default");
+  assert.equal(normalized.conversationId, "conversation-from-metadata");
+  assert.deepEqual(normalized.sender, {
+    id: "metadata-user",
+    name: "Metadata Name",
+    username: "metadata-user",
+  });
+  assert.equal(normalized.text, "");
+  assert.equal(normalized.threadId, "77");
+  assert.deepEqual(normalized.media, [
+    { path: "/tmp/from-metadata.png", url: null, mimeType: "image/png" },
+    {
+      path: null,
+      url: "https://cdn.example/from-metadata.pdf",
+      mimeType: "application/pdf",
+    },
+  ]);
+  assert.equal(normalized.isGroup, true);
+  assert.equal(normalized.receivedAt, "2023-11-14T22:13:20.000Z");
+  assert.equal(
+    normalized.id,
+    eventIdFor(
+      `v1|slack|default|conversation-from-metadata|metadata-user|${fixedNow}|${contentHash}`,
+    ),
+  );
+  assert.deepEqual(event, eventSnapshot);
+  assert.deepEqual(context, contextSnapshot);
+});
+
+test("normalizeInboundEvent consumes a CorrelationBuffer event-context record as enrichment", () => {
+  const buffer = new CorrelationBuffer({
+    ttlMs: 1_000,
+    maxEntries: 10,
+    now: () => 1_717_171_721_000,
+  });
+  const captured = {
+    event: {
+      content: "captured content",
+      timestamp: 1_717_171_721,
+      messageId: "message-12",
+      senderId: "user-5",
+      senderName: "Captured Name",
+      senderUsername: "captured-user",
+      replyToId: "message-11",
+      replyToIdFull: "discord:message-11",
+      replyToBody: "Captured reply",
+      replyToSender: "Previous Sender",
+      mediaPaths: ["/tmp/captured.png"],
+      mediaTypes: ["image/png"],
+      isGroup: true,
+      metadata: { providerEventType: "MESSAGE_CREATE" },
+    },
+    context: {
+      channelId: "discord",
+      accountId: "account-6",
+      conversationId: "conversation-6",
+      sessionKey: "session-6",
+      senderId: "user-5",
+    },
+  };
+  buffer.capture(captured);
+  const enrichment = buffer.take({
+    event: { messageId: "message-12" },
+    context: { channelId: "discord", accountId: "account-6" },
+  });
+  const event = {
+    content: "current content",
+    timestamp: 1_717_171_721,
+    messageId: "message-12",
+  };
+  const context = { channelId: "discord" };
+  const eventSnapshot = structuredClone(event);
+  const contextSnapshot = structuredClone(context);
+  const enrichmentSnapshot = structuredClone(enrichment);
+
+  const normalized = normalizeInboundEvent({ event, context, enrichment });
+
+  assert.equal(normalized.accountId, "account-6");
+  assert.equal(normalized.conversationId, "conversation-6");
+  assert.equal(normalized.sessionKey, "session-6");
+  assert.deepEqual(normalized.sender, {
+    id: "user-5",
+    name: "Captured Name",
+    username: "captured-user",
+  });
+  assert.equal(normalized.text, "current content");
+  assert.deepEqual(normalized.replyTo, {
+    id: "message-11",
+    text: "Captured reply",
+    sender: "Previous Sender",
+  });
+  assert.deepEqual(normalized.media, [
+    { path: "/tmp/captured.png", url: null, mimeType: "image/png" },
+  ]);
+  assert.equal(normalized.isGroup, true);
+  assert.deepEqual(normalized.metadata, {
+    providerEventType: "MESSAGE_CREATE",
+    replyToIdFull: "discord:message-11",
+  });
+  assert.equal(normalized.receivedAt, "2024-05-31T16:08:41.000Z");
+  assert.deepEqual(event, eventSnapshot);
+  assert.deepEqual(context, contextSnapshot);
+  assert.deepEqual(enrichment, enrichmentSnapshot);
 });
 
 test("buildCorrelationKeys returns exact, session, then conversation keys", () => {

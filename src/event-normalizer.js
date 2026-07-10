@@ -91,53 +91,77 @@ function sha256(value) {
   return createHash("sha256").update(String(value)).digest("hex");
 }
 
-function normalizeMediaList(plural, singular) {
-  if (Array.isArray(plural)) {
-    return plural;
+function normalizeMediaList(plural, singular, metadataPlural, metadataSingular) {
+  const pluralValue = firstNonEmpty(plural, metadataPlural);
+  if (Array.isArray(pluralValue)) {
+    return pluralValue;
   }
 
-  return isEmpty(singular) ? [] : [singular];
+  const singularValue = firstNonEmpty(singular, metadataSingular);
+  return isEmpty(singularValue) ? [] : [singularValue];
 }
 
-function buildMedia(event) {
-  const paths = normalizeMediaList(event.mediaPaths, event.mediaPath);
-  const urls = normalizeMediaList(event.mediaUrls, event.mediaUrl);
-  const types = normalizeMediaList(event.mediaTypes, event.mediaType);
+function buildMedia(event, metadata) {
+  const paths = normalizeMediaList(
+    event.mediaPaths,
+    event.mediaPath,
+    metadata.mediaPaths,
+    metadata.mediaPath,
+  );
+  const urls = normalizeMediaList(
+    event.mediaUrls,
+    event.mediaUrl,
+    metadata.mediaUrls,
+    metadata.mediaUrl,
+  );
+  const types = normalizeMediaList(
+    event.mediaTypes,
+    event.mediaType,
+    metadata.mediaTypes,
+    metadata.mediaType,
+  );
   const length = Math.max(paths.length, urls.length, types.length);
 
   return Array.from({ length }, (_, index) => ({
     path: nullableString(paths[index]),
     url: nullableString(urls[index]),
-    type: nullableString(types[index]),
+    mimeType: nullableString(types[index]),
   }));
 }
 
-function buildReplyTo(event, context) {
-  const id = nullableString(firstNonEmpty(event.replyToId, context.replyToId));
-  const idFull = nullableString(firstNonEmpty(event.replyToIdFull, context.replyToIdFull));
-  const body = nullableString(firstNonEmpty(event.replyToBody, context.replyToBody));
-  const sender = nullableString(firstNonEmpty(event.replyToSender, context.replyToSender));
-  const isQuote = firstNonEmpty(event.replyToIsQuote, context.replyToIsQuote);
+function buildReplyTo(event, context, metadata) {
+  const id = nullableString(
+    firstNonEmpty(event.replyToId, context.replyToId, metadata.replyToId),
+  );
+  const text = nullableString(
+    firstNonEmpty(
+      event.replyToBody,
+      context.replyToBody,
+      metadata.replyToBody,
+      metadata.replyToText,
+    ),
+  );
+  const sender = nullableString(
+    firstNonEmpty(event.replyToSender, context.replyToSender, metadata.replyToSender),
+  );
 
-  if (id === null && idFull === null && body === null && sender === null && isQuote === undefined) {
+  if (id === null && text === null && sender === null) {
     return null;
   }
 
-  return {
-    id,
-    idFull,
-    body,
-    sender,
-    isQuote: isQuote === undefined ? null : Boolean(isQuote),
-  };
+  return { id, text, sender };
 }
 
-function buildMetadata(event) {
-  let metadata = isPlainObject(event.metadata) ? cloneValue(event.metadata) : {};
+function buildMetadata(event, context) {
+  let metadata = mergeNonEmpty(
+    isPlainObject(event.metadata) ? event.metadata : {},
+    isPlainObject(context.metadata) ? context.metadata : {},
+  );
 
   for (const field of PROVIDER_METADATA_FIELDS) {
-    if (!isEmpty(event[field])) {
-      metadata = mergeNonEmpty(metadata, { [field]: event[field] });
+    const value = firstNonEmpty(event[field], context[field]);
+    if (!isEmpty(value)) {
+      metadata = mergeNonEmpty(metadata, { [field]: value });
     }
   }
 
@@ -166,6 +190,48 @@ function createEventId({
       ].join("|");
 
   return `${EVENT_ID_PREFIX}${sha256(fingerprint).slice(0, 32)}`;
+}
+
+function splitEnrichment(enrichment) {
+  if (!isPlainObject(enrichment)) {
+    return { event: {}, context: {} };
+  }
+
+  if (!isPlainObject(enrichment.event) && !isPlainObject(enrichment.context)) {
+    return { event: enrichment, context: {} };
+  }
+
+  const { event, context, ...flatEvent } = enrichment;
+  return {
+    event: mergeNonEmpty(isPlainObject(event) ? event : {}, flatEvent),
+    context: isPlainObject(context) ? cloneValue(context) : {},
+  };
+}
+
+function readClock(clock) {
+  if (typeof clock === "function") {
+    return clock();
+  }
+
+  if (isPlainObject(clock) && typeof clock.now === "function") {
+    return clock.now();
+  }
+
+  return clock;
+}
+
+function resolveReceivedAt(timestamp, clock) {
+  const timestampMs = normalizeTimestamp(timestamp);
+  const clockMs = timestampMs === null ? normalizeTimestamp(readClock(clock)) : null;
+  const fallbackMs = timestampMs ?? clockMs ?? Date.now();
+  const date = new Date(fallbackMs);
+
+  if (Number.isNaN(date.getTime())) {
+    const currentMs = Date.now();
+    return { timestampMs: currentMs, iso: new Date(currentMs).toISOString() };
+  }
+
+  return { timestampMs: fallbackMs, iso: date.toISOString() };
 }
 
 export function buildCorrelationKeys({ event = {}, context = {} } = {}) {
@@ -240,33 +306,62 @@ export function buildCorrelationKeys({ event = {}, context = {} } = {}) {
   return [...new Set(keys)];
 }
 
-export function normalizeInboundEvent({ event = {}, context = {}, enrichment = {} } = {}) {
-  const enrichedEvent = mergeNonEmpty(event, enrichment);
+export function normalizeInboundEvent(options = {}) {
+  const source = options ?? {};
+  const {
+    event = {},
+    context = {},
+    enrichment = {},
+    now = Date.now,
+    clock = now,
+  } = source;
+  const split = splitEnrichment(enrichment);
+  const enrichedEvent = mergeNonEmpty(isPlainObject(event) ? event : {}, split.event);
+  const enrichedContext = mergeNonEmpty(
+    isPlainObject(context) ? context : {},
+    split.context,
+  );
+  const metadata = buildMetadata(enrichedEvent, enrichedContext);
   const channel = nullableString(
-    firstNonEmpty(context.channelId, enrichedEvent.channel, enrichedEvent.channelId),
+    firstNonEmpty(enrichedContext.channelId, enrichedEvent.channel, enrichedEvent.channelId),
   );
-  const accountId = nullableString(firstNonEmpty(context.accountId, enrichedEvent.accountId));
+  const accountId =
+    nullableString(firstNonEmpty(enrichedContext.accountId, enrichedEvent.accountId)) ??
+    "default";
   const conversationId = nullableString(
-    firstNonEmpty(context.conversationId, enrichedEvent.conversationId, enrichedEvent.from),
-  );
-  const sessionKey = nullableString(
-    firstNonEmpty(context.sessionKey, enrichedEvent.sessionKey),
-  );
-  const messageId = nullableString(
-    firstNonEmpty(enrichedEvent.messageId, context.messageId),
-  );
-  const senderId = nullableString(
-    firstNonEmpty(enrichedEvent.senderId, context.senderId, enrichedEvent.from),
-  );
-  const receivedAt = normalizeTimestamp(enrichedEvent.timestamp);
-  const text = nullableString(
     firstNonEmpty(
-      enrichedEvent.content,
-      enrichedEvent.bodyForAgent,
-      enrichedEvent.body,
-      enrichedEvent.transcript,
+      enrichedContext.conversationId,
+      enrichedEvent.conversationId,
+      metadata.originatingTo,
+      enrichedEvent.from,
     ),
   );
+  const sessionKey = nullableString(
+    firstNonEmpty(enrichedContext.sessionKey, enrichedEvent.sessionKey),
+  );
+  const messageId = nullableString(
+    firstNonEmpty(enrichedEvent.messageId, enrichedContext.messageId),
+  );
+  const metadataSender = isPlainObject(metadata.sender) ? metadata.sender : {};
+  const senderId = nullableString(
+    firstNonEmpty(
+      enrichedEvent.senderId,
+      enrichedContext.senderId,
+      metadata.senderId,
+      metadataSender.id,
+      enrichedEvent.from,
+    ),
+  );
+  const { timestampMs, iso: receivedAt } = resolveReceivedAt(enrichedEvent.timestamp, clock);
+  const text =
+    nullableString(
+      firstNonEmpty(
+        enrichedEvent.content,
+        enrichedEvent.bodyForAgent,
+        enrichedEvent.body,
+        enrichedEvent.transcript,
+      ),
+    ) ?? "";
 
   return {
     id: createEventId({
@@ -276,7 +371,7 @@ export function normalizeInboundEvent({ event = {}, context = {}, enrichment = {
       messageId,
       senderId,
       text,
-      receivedAt,
+      receivedAt: timestampMs,
     }),
     channel,
     accountId,
@@ -285,15 +380,23 @@ export function normalizeInboundEvent({ event = {}, context = {}, enrichment = {
     messageId,
     sender: {
       id: senderId,
-      name: nullableString(enrichedEvent.senderName),
-      username: nullableString(enrichedEvent.senderUsername),
+      name: nullableString(
+        firstNonEmpty(enrichedEvent.senderName, metadata.senderName, metadataSender.name),
+      ),
+      username: nullableString(
+        firstNonEmpty(
+          enrichedEvent.senderUsername,
+          metadata.senderUsername,
+          metadataSender.username,
+        ),
+      ),
     },
     text,
-    threadId: nullableString(enrichedEvent.threadId),
-    replyTo: buildReplyTo(enrichedEvent, context),
-    media: buildMedia(enrichedEvent),
-    isGroup: Boolean(enrichedEvent.isGroup),
-    metadata: buildMetadata(enrichedEvent),
+    threadId: nullableString(firstNonEmpty(enrichedEvent.threadId, metadata.threadId)),
+    replyTo: buildReplyTo(enrichedEvent, enrichedContext, metadata),
+    media: buildMedia(enrichedEvent, metadata),
+    isGroup: Boolean(firstNonEmpty(enrichedEvent.isGroup, metadata.isGroup)),
+    metadata,
     receivedAt,
   };
 }
