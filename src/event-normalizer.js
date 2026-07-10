@@ -131,7 +131,14 @@ function buildMedia(event, metadata) {
 
 function buildReplyTo(event, context, metadata) {
   const id = nullableString(
-    firstNonEmpty(event.replyToId, context.replyToId, metadata.replyToId),
+    firstNonEmpty(
+      event.replyToId,
+      context.replyToId,
+      metadata.replyToId,
+      event.replyToIdFull,
+      context.replyToIdFull,
+      metadata.replyToIdFull,
+    ),
   );
   const text = nullableString(
     firstNonEmpty(
@@ -240,9 +247,9 @@ export function buildCorrelationKeys({ event = {}, context = {} } = {}) {
   const channel = nullableString(
     firstNonEmpty(sourceEvent.channel, sourceEvent.channelId, sourceContext.channelId),
   );
-  const accountId = nullableString(
-    firstNonEmpty(sourceEvent.accountId, sourceContext.accountId),
-  );
+  const accountId =
+    nullableString(firstNonEmpty(sourceEvent.accountId, sourceContext.accountId)) ??
+    "default";
   const conversationId = nullableString(
     firstNonEmpty(
       sourceEvent.conversationId,
@@ -280,7 +287,7 @@ export function buildCorrelationKeys({ event = {}, context = {} } = {}) {
   const keys = [];
 
   if (channel !== null && messageId !== null) {
-    keys.push(`exact|${channel}|${accountId ?? ""}|${messageId}`);
+    keys.push(`exact|${channel}|${accountId}|${messageId}`);
   }
 
   if (
@@ -299,7 +306,7 @@ export function buildCorrelationKeys({ event = {}, context = {} } = {}) {
     contentHash !== null
   ) {
     keys.push(
-      `conversation|${channel}|${accountId ?? ""}|${conversationId}|${timestamp}|${contentHash}`,
+      `conversation|${channel}|${accountId}|${conversationId}|${timestamp}|${contentHash}`,
     );
   }
 
@@ -362,6 +369,7 @@ export function normalizeInboundEvent(options = {}) {
         enrichedEvent.transcript,
       ),
     ) ?? "";
+  const explicitIsGroup = firstNonEmpty(enrichedEvent.isGroup, metadata.isGroup);
 
   return {
     id: createEventId({
@@ -395,7 +403,8 @@ export function normalizeInboundEvent(options = {}) {
     threadId: nullableString(firstNonEmpty(enrichedEvent.threadId, metadata.threadId)),
     replyTo: buildReplyTo(enrichedEvent, enrichedContext, metadata),
     media: buildMedia(enrichedEvent, metadata),
-    isGroup: Boolean(firstNonEmpty(enrichedEvent.isGroup, metadata.isGroup)),
+    isGroup:
+      explicitIsGroup === undefined ? !isEmpty(metadata.groupId) : Boolean(explicitIsGroup),
     metadata,
     receivedAt,
   };

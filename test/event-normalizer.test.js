@@ -327,6 +327,60 @@ test("normalizeInboundEvent consumes a CorrelationBuffer event-context record as
   assert.deepEqual(enrichment, enrichmentSnapshot);
 });
 
+test("normalizeInboundEvent falls back to provider-full reply IDs without widening replyTo", () => {
+  const cases = [
+    {
+      name: "event",
+      event: { replyToIdFull: "event:reply-1" },
+      context: {},
+      expectedId: "event:reply-1",
+    },
+    {
+      name: "context",
+      event: {},
+      context: { replyToIdFull: "context:reply-2" },
+      expectedId: "context:reply-2",
+    },
+    {
+      name: "metadata",
+      event: { metadata: { replyToIdFull: "metadata:reply-3" } },
+      context: {},
+      expectedId: "metadata:reply-3",
+    },
+  ];
+
+  for (const entry of cases) {
+    const normalized = normalizeInboundEvent({
+      event: { timestamp: 1_717_171_722, ...entry.event },
+      context: { channelId: "discord", ...entry.context },
+    });
+
+    assert.deepEqual(
+      normalized.replyTo,
+      { id: entry.expectedId, text: null, sender: null },
+      entry.name,
+    );
+  }
+});
+
+test("normalizeInboundEvent infers groups from metadata without overriding explicit false", () => {
+  const inferred = normalizeInboundEvent({
+    event: { timestamp: 1_717_171_723, metadata: { groupId: "group-1" } },
+    context: { channelId: "slack" },
+  });
+  const explicitDirect = normalizeInboundEvent({
+    event: {
+      timestamp: 1_717_171_723,
+      isGroup: false,
+      metadata: { groupId: "group-1" },
+    },
+    context: { channelId: "slack" },
+  });
+
+  assert.equal(inferred.isGroup, true);
+  assert.equal(explicitDirect.isGroup, false);
+});
+
 test("buildCorrelationKeys returns exact, session, then conversation keys", () => {
   const content = "Correlate me";
   const contentHash = createHash("sha256").update(content).digest("hex");
@@ -372,4 +426,30 @@ test("buildCorrelationKeys omits meaningless exact keys", () => {
 
   assert.equal(keys.some((key) => key.startsWith("exact|")), false);
   assert.equal(new Set(keys).size, keys.length);
+});
+
+test("buildCorrelationKeys uses the default account when accountId is absent", () => {
+  const content = "default account correlation";
+  const contentHash = createHash("sha256").update(content).digest("hex");
+
+  assert.deepEqual(
+    buildCorrelationKeys({
+      event: {
+        channel: "discord",
+        content,
+        timestamp: 1_717_171_724,
+        messageId: "message-13",
+        senderId: "user-6",
+      },
+      context: {
+        conversationId: "conversation-7",
+        sessionKey: "session-7",
+      },
+    }),
+    [
+      "exact|discord|default|message-13",
+      `session|session-7|1717171724000|user-6|${contentHash}`,
+      `conversation|discord|default|conversation-7|1717171724000|${contentHash}`,
+    ],
+  );
 });
