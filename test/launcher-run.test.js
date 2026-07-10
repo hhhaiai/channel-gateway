@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,6 +24,7 @@ test("orchestrates isolated first-run setup before supervising the pinned Gatewa
   t.after(() => rm(directory, { recursive: true, force: true }));
   const processRef = new FakeProcess();
   const calls = [];
+  const verifiedRoots = [];
   const child = new EventEmitter();
   child.kill = () => true;
   const spawn = (command, args, options) => {
@@ -43,9 +44,11 @@ test("orchestrates isolated first-run setup before supervising the pinned Gatewa
     nodeVersion: process.versions.node,
     processRef,
     spawn,
+    verifyOpenClawPatch: async (root) => verifiedRoots.push(root),
   });
 
   assert.deepEqual(result, { code: 0, signal: null, exitCode: 0 });
+  assert.deepEqual(verifiedRoots, [path.join(SERVICE_ROOT, "node_modules", "openclaw")]);
   assert.equal(calls.length, 1);
   assert.deepEqual(calls[0].args, [
     path.join(SERVICE_ROOT, "node_modules", "openclaw", "openclaw.mjs"),
@@ -71,6 +74,33 @@ test("orchestrates isolated first-run setup before supervising the pinned Gatewa
   ]);
   assert.equal(config.plugins.entries["channel-gateway"].enabled, true);
   assert.equal("models" in config, false);
+});
+
+test("refuses to launch when the installed Host rich-hook patch is unverified", async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), "channel-gateway-run-unpatched-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const dataDir = path.join(directory, "data");
+  let spawned = false;
+
+  await assert.rejects(
+    runChannelGateway({
+      serviceRoot: SERVICE_ROOT,
+      cwd: directory,
+      env: {
+        CHANNEL_GATEWAY_DATA_DIR: dataDir,
+        CHANNEL_GATEWAY_TOKEN: "fixed-token",
+      },
+      verifyOpenClawPatch: async () => {
+        throw new Error("missing .channel-gateway-rich-hook-v1.json");
+      },
+      spawn() {
+        spawned = true;
+      },
+    }),
+    /missing \.channel-gateway-rich-hook-v1\.json/,
+  );
+  assert.equal(spawned, false);
+  await assert.rejects(access(dataDir), { code: "ENOENT" });
 });
 
 test("CLI reports startup failures as one sanitized line", () => {

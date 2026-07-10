@@ -1,0 +1,346 @@
+diff --git a/src/auto-reply/reply/dispatch-from-config.test.ts b/src/auto-reply/reply/dispatch-from-config.test.ts
+index 76892ce6..79472b56 100644
+--- a/src/auto-reply/reply/dispatch-from-config.test.ts
++++ b/src/auto-reply/reply/dispatch-from-config.test.ts
+@@ -228,6 +228,11 @@ const replyMediaPathMocks = vi.hoisted(() => ({
+ const runtimePluginMocks = vi.hoisted(() => ({
+   ensureRuntimePluginsLoaded: vi.fn(),
+ }));
++const stageSandboxMediaMocks = vi.hoisted(() => ({
++  stageSandboxMedia: vi.fn(async (_params: { ctx: MsgContext }) => ({
++    staged: new Map<string, string>(),
++  })),
++}));
+ const conversationBindingMocks = vi.hoisted(() => {
+   type BindingMsgContext = {
+     OriginatingChannel?: string | null;
+@@ -452,6 +457,9 @@ vi.mock("../../plugins/hook-runner-global.js", () => ({
+   getGlobalPluginRegistry: () => hookMocks.registry,
+   resetGlobalHookRunner: vi.fn(),
+ }));
++vi.mock("./stage-sandbox-media.runtime.js", () => ({
++  stageSandboxMedia: stageSandboxMediaMocks.stageSandboxMedia,
++}));
+ vi.mock("../../acp/runtime/session-meta.js", () => ({
+   listAcpSessionEntries: acpMocks.listAcpSessionEntries,
+   readAcpSessionEntry: acpMocks.readAcpSessionEntry,
+@@ -7732,6 +7740,8 @@ describe("before_dispatch hook", () => {
+     hookMocks.runner.runBeforeDispatch.mockResolvedValue(undefined);
+     hookMocks.runner.runReplyDispatch.mockClear();
+     hookMocks.runner.runReplyDispatch.mockResolvedValue(undefined);
++    stageSandboxMediaMocks.stageSandboxMedia.mockReset();
++    stageSandboxMediaMocks.stageSandboxMedia.mockResolvedValue({ staged: new Map() });
+     hookMocks.runner.hasHooks.mockImplementation(
+       (hookName?: string) => hookName === "before_dispatch",
+     );
+@@ -7749,6 +7759,130 @@ describe("before_dispatch hook", () => {
+     expect(result.queuedFinal).toBe(true);
+   });
+ 
++  it("stages remote media and passes rich canonical fields without model dispatch", async () => {
++    hookMocks.runner.runBeforeDispatch.mockResolvedValue({ handled: true });
++    stageSandboxMediaMocks.stageSandboxMedia.mockImplementation(async ({ ctx }) => {
++      ctx.MediaPath = "/state/staged/photo.jpg";
++      ctx.MediaPaths = ["/state/staged/photo.jpg"];
++      ctx.MediaUrl = "/state/staged/photo.jpg";
++      ctx.MediaUrls = ["/state/staged/photo.jpg"];
++      return {
++        staged: new Map([["/remote/inbox/photo.jpg", "/state/staged/photo.jpg"]]),
++      };
++    });
++    const replyResolver = vi.fn(async () => ({ text: "must not run" }) satisfies ReplyPayload);
++    const dispatcher = createDispatcher();
++    const ctx = createHookCtx({
++      AccountId: "work",
++      OriginatingTo: "telegram:group:ops",
++      SessionKey: "agent:main:telegram:group:ops",
++      MessageSidFull: "telegram:42",
++      SenderId: "telegram:user:10001",
++      SenderName: "Alice",
++      SenderUsername: "alice",
++      MessageThreadId: 7,
++      MediaRemoteHost: "openclaw@sidecar",
++      MediaPath: "/remote/inbox/photo.jpg",
++      MediaPaths: ["/remote/inbox/photo.jpg"],
++      MediaUrl: "/remote/inbox/photo.jpg",
++      MediaUrls: ["/remote/inbox/photo.jpg"],
++      MediaType: "image/jpeg",
++      MediaTypes: ["image/jpeg"],
++    });
++
++    await dispatchReplyFromConfig({ ctx, cfg: emptyConfig, dispatcher, replyResolver });
++
++    expect(stageSandboxMediaMocks.stageSandboxMedia).toHaveBeenCalledWith({
++      ctx,
++      sessionCtx: ctx,
++      cfg: emptyConfig,
++      sessionKey: "agent:main:telegram:group:ops",
++      workspaceDir: expect.any(String),
++    });
++    expect(ctx.MediaStaged).toBe(true);
++    const beforeDispatchCall = firstMockCall(
++      hookMocks.runner.runBeforeDispatch,
++      "before dispatch hook",
++    ) as [Record<string, unknown>, Record<string, unknown>] | undefined;
++    expect(beforeDispatchCall?.[0]).toMatchObject({
++      accountId: "work",
++      conversationId: "group:ops",
++      messageId: "telegram:42",
++      senderId: "telegram:user:10001",
++      senderName: "Alice",
++      senderUsername: "alice",
++      threadId: 7,
++      mediaPaths: ["/state/staged/photo.jpg"],
++      mediaUrls: ["/state/staged/photo.jpg"],
++      mediaTypes: ["image/jpeg"],
++      metadata: {
++        mediaPath: "/state/staged/photo.jpg",
++        mediaUrl: "/state/staged/photo.jpg",
++        mediaType: "image/jpeg",
++        mediaStagingError: false,
++      },
++    });
++    expect(beforeDispatchCall?.[1]).toMatchObject({
++      accountId: "work",
++      conversationId: "group:ops",
++      messageId: "telegram:42",
++      senderName: "Alice",
++      senderUsername: "alice",
++      threadId: 7,
++      mediaPaths: ["/state/staged/photo.jpg"],
++      metadata: { mediaStagingError: false },
++    });
++    expect(replyResolver).not.toHaveBeenCalled();
++  });
++
++  it("preserves remote references and exposes only a boolean staging failure", async () => {
++    hookMocks.runner.runBeforeDispatch.mockResolvedValue({ handled: true });
++    stageSandboxMediaMocks.stageSandboxMedia.mockImplementation(async ({ ctx }) => {
++      ctx.MediaPath = "/state/partial/photo.jpg";
++      ctx.MediaPaths = ["/state/partial/photo.jpg"];
++      ctx.MediaUrl = "/state/partial/photo.jpg";
++      ctx.MediaUrls = ["/state/partial/photo.jpg"];
++      throw new Error("scp password and remote filesystem details");
++    });
++    const dispatcher = createDispatcher();
++    const ctx = createHookCtx({
++      SessionKey: "agent:main:telegram:private:user1",
++      MediaRemoteHost: "openclaw@sidecar",
++      MediaPath: "/remote/inbox/photo.jpg",
++      MediaPaths: ["/remote/inbox/photo.jpg"],
++      MediaUrl: "/remote/inbox/photo.jpg",
++      MediaUrls: ["/remote/inbox/photo.jpg"],
++      MediaType: "image/jpeg",
++      MediaTypes: ["image/jpeg"],
++      MediaStaged: false,
++    });
++
++    await dispatchReplyFromConfig({ ctx, cfg: emptyConfig, dispatcher });
++
++    expect(ctx).toMatchObject({
++      MediaPath: "/remote/inbox/photo.jpg",
++      MediaPaths: ["/remote/inbox/photo.jpg"],
++      MediaUrl: "/remote/inbox/photo.jpg",
++      MediaUrls: ["/remote/inbox/photo.jpg"],
++      MediaStaged: false,
++    });
++    const beforeDispatchCall = firstMockCall(
++      hookMocks.runner.runBeforeDispatch,
++      "before dispatch hook",
++    ) as [Record<string, unknown>, Record<string, unknown>] | undefined;
++    expect(beforeDispatchCall?.[0]).toMatchObject({
++      mediaPaths: ["/remote/inbox/photo.jpg"],
++      mediaUrls: ["/remote/inbox/photo.jpg"],
++      metadata: { mediaStagingError: true },
++    });
++    expect(beforeDispatchCall?.[1]).toMatchObject({
++      mediaPaths: ["/remote/inbox/photo.jpg"],
++      mediaUrls: ["/remote/inbox/photo.jpg"],
++      metadata: { mediaStagingError: true },
++    });
++    expect(JSON.stringify(beforeDispatchCall)).not.toContain("scp password");
++  });
++
+   it("silently short-circuits when hook returns handled without text", async () => {
+     hookMocks.runner.runBeforeDispatch.mockResolvedValue({ handled: true });
+     const dispatcher = createDispatcher();
+diff --git a/src/auto-reply/reply/dispatch-from-config.ts b/src/auto-reply/reply/dispatch-from-config.ts
+index f2d19f5f..29dcb5b2 100644
+--- a/src/auto-reply/reply/dispatch-from-config.ts
++++ b/src/auto-reply/reply/dispatch-from-config.ts
+@@ -1557,9 +1557,9 @@ export async function dispatchReplyFromConfig(
+     typeof ctx.Timestamp === "number" && Number.isFinite(ctx.Timestamp) ? ctx.Timestamp : undefined;
+   const messageIdForHook =
+     ctx.MessageSidFull ?? ctx.MessageSid ?? ctx.MessageSidFirst ?? ctx.MessageSidLast;
+-  const hookContext = deriveInboundMessageHookContext(ctx, { messageId: messageIdForHook });
++  let hookContext = deriveInboundMessageHookContext(ctx, { messageId: messageIdForHook });
+   const { isGroup, groupId } = hookContext;
+-  const inboundClaimContext = toPluginInboundClaimContext(hookContext);
++  let inboundClaimContext = toPluginInboundClaimContext(hookContext);
+   const inboundClaimEvent = toPluginInboundClaimEvent(hookContext, {
+     commandAuthorized:
+       typeof ctx.CommandAuthorized === "boolean" ? ctx.CommandAuthorized : undefined,
+@@ -2441,6 +2441,66 @@ export async function dispatchReplyFromConfig(
+ 
+     // Run before_dispatch hook — let plugins inspect or handle before model dispatch.
+     if (hookRunner?.hasHooks("before_dispatch")) {
++      let mediaStagingError = false;
++      const remoteMediaPaths = Array.isArray(ctx.MediaPaths) && ctx.MediaPaths.length > 0
++        ? ctx.MediaPaths
++        : ctx.MediaPath
++          ? [ctx.MediaPath]
++          : [];
++      if (ctx.MediaRemoteHost && remoteMediaPaths.length > 0) {
++        const originalRemoteMediaReferences = {
++          MediaPath: ctx.MediaPath,
++          MediaPaths: Array.isArray(ctx.MediaPaths) ? [...ctx.MediaPaths] : ctx.MediaPaths,
++          MediaUrl: ctx.MediaUrl,
++          MediaUrls: Array.isArray(ctx.MediaUrls) ? [...ctx.MediaUrls] : ctx.MediaUrls,
++          MediaType: ctx.MediaType,
++          MediaTypes: Array.isArray(ctx.MediaTypes) ? [...ctx.MediaTypes] : ctx.MediaTypes,
++          MediaStaged: ctx.MediaStaged,
++        };
++        const restoreRemoteMediaReferences = () => {
++          ctx.MediaPath = originalRemoteMediaReferences.MediaPath;
++          ctx.MediaPaths = originalRemoteMediaReferences.MediaPaths;
++          ctx.MediaUrl = originalRemoteMediaReferences.MediaUrl;
++          ctx.MediaUrls = originalRemoteMediaReferences.MediaUrls;
++          ctx.MediaType = originalRemoteMediaReferences.MediaType;
++          ctx.MediaTypes = originalRemoteMediaReferences.MediaTypes;
++          ctx.MediaStaged = originalRemoteMediaReferences.MediaStaged;
++        };
++        try {
++          const { stageSandboxMedia } = await import("./stage-sandbox-media.runtime.js");
++          const stagedMedia = await stageSandboxMedia({
++            ctx,
++            sessionCtx: ctx,
++            cfg,
++            sessionKey: acpDispatchSessionKey,
++            workspaceDir,
++          });
++          if (stagedMedia.staged.size === 0) {
++            restoreRemoteMediaReferences();
++            mediaStagingError = true;
++          } else {
++            ctx.MediaStaged = true;
++            hookContext = deriveInboundMessageHookContext(ctx, { messageId: messageIdForHook });
++            inboundClaimContext = toPluginInboundClaimContext(hookContext);
++          }
++        } catch {
++          restoreRemoteMediaReferences();
++          mediaStagingError = true;
++        }
++      }
++      const beforeDispatchMetadata = {
++        from: hookContext.from,
++        to: hookContext.to,
++        provider: hookContext.provider,
++        surface: hookContext.surface,
++        originatingChannel: hookContext.originatingChannel,
++        originatingTo: hookContext.originatingTo,
++        mediaPath: hookContext.mediaPath,
++        mediaUrl: hookContext.mediaUrl,
++        mediaType: hookContext.mediaType,
++        mediaStagingError,
++      };
++
+       const beforeDispatchResult = await traceReplyPhase("reply.before_dispatch_hooks", () =>
+         runWithDispatchAbortSignal(getPreDispatchAbortSignal(), () =>
+           hookRunner.runBeforeDispatch(
+@@ -2448,27 +2508,45 @@ export async function dispatchReplyFromConfig(
+               content: hookContext.content,
+               body: hookContext.bodyForAgent ?? hookContext.body,
+               channel: hookContext.channelId,
++              accountId: hookContext.accountId,
++              conversationId: inboundClaimContext.conversationId,
+               sessionKey: sessionStoreEntry.sessionKey ?? sessionKey,
++              messageId: hookContext.messageId,
+               senderId: hookContext.senderId,
++              senderName: hookContext.senderName,
++              senderUsername: hookContext.senderUsername,
++              threadId: hookContext.threadId,
+               replyToId: hookContext.replyToId,
+               replyToIdFull: hookContext.replyToIdFull,
+               replyToBody: hookContext.replyToBody,
+               replyToSender: hookContext.replyToSender,
+               replyToIsQuote: hookContext.replyToIsQuote,
++              mediaPaths: hookContext.mediaPaths,
++              mediaUrls: hookContext.mediaUrls,
++              mediaTypes: hookContext.mediaTypes,
+               isGroup: hookContext.isGroup,
+               timestamp: hookContext.timestamp,
++              metadata: beforeDispatchMetadata,
+             },
+             {
+               channelId: hookContext.channelId,
+               accountId: hookContext.accountId,
+               conversationId: inboundClaimContext.conversationId,
+               sessionKey: sessionStoreEntry.sessionKey ?? sessionKey,
++              messageId: hookContext.messageId,
+               senderId: hookContext.senderId,
++              senderName: hookContext.senderName,
++              senderUsername: hookContext.senderUsername,
++              threadId: hookContext.threadId,
+               replyToId: hookContext.replyToId,
+               replyToIdFull: hookContext.replyToIdFull,
+               replyToBody: hookContext.replyToBody,
+               replyToSender: hookContext.replyToSender,
+               replyToIsQuote: hookContext.replyToIsQuote,
++              mediaPaths: hookContext.mediaPaths,
++              mediaUrls: hookContext.mediaUrls,
++              mediaTypes: hookContext.mediaTypes,
++              metadata: beforeDispatchMetadata,
+             },
+           ),
+         ),
+diff --git a/src/plugins/hook-types.ts b/src/plugins/hook-types.ts
+index 49e41ae9..934f6c91 100644
+--- a/src/plugins/hook-types.ts
++++ b/src/plugins/hook-types.ts
+@@ -444,15 +444,25 @@ export type PluginHookBeforeDispatchEvent = {
+   content: string;
+   body?: string;
+   channel?: string;
++  accountId?: string;
++  conversationId?: string;
+   sessionKey?: string;
++  messageId?: string;
+   senderId?: string;
++  senderName?: string;
++  senderUsername?: string;
++  threadId?: string | number;
+   replyToId?: string;
+   replyToIdFull?: string;
+   replyToBody?: string;
+   replyToSender?: string;
+   replyToIsQuote?: boolean;
++  mediaPaths?: string[];
++  mediaUrls?: string[];
++  mediaTypes?: string[];
+   isGroup?: boolean;
+   timestamp?: number;
++  metadata?: Record<string, unknown>;
+ };
+ 
+ export type PluginHookBeforeDispatchContext = {
+@@ -460,12 +470,20 @@ export type PluginHookBeforeDispatchContext = {
+   accountId?: string;
+   conversationId?: string;
+   sessionKey?: string;
++  messageId?: string;
+   senderId?: string;
++  senderName?: string;
++  senderUsername?: string;
++  threadId?: string | number;
+   replyToId?: string;
+   replyToIdFull?: string;
+   replyToBody?: string;
+   replyToSender?: string;
+   replyToIsQuote?: boolean;
++  mediaPaths?: string[];
++  mediaUrls?: string[];
++  mediaTypes?: string[];
++  metadata?: Record<string, unknown>;
+ };
+ 
+ export type PluginHookBeforeDispatchResult = {

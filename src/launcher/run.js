@@ -1,4 +1,5 @@
 import { discoverChannelPackages } from "./channel-packages.js";
+import { verifyOpenClawRichHookPatch } from "../host-patch.js";
 import { ensureInitialConfig } from "./config.js";
 import { ensureDataPaths, resolveDataPaths } from "./paths.js";
 import {
@@ -15,9 +16,11 @@ export async function runChannelGateway({
   nodeVersion = process.versions.node,
   processRef = process,
   spawn,
+  verifyOpenClawPatch = verifyOpenClawRichHookPatch,
 }) {
   assertSupportedNodeVersion(nodeVersion);
   await assertPinnedOpenClawInstallation({ serviceRoot });
+  await verifyOpenClawPatch(`${serviceRoot}/node_modules/openclaw`);
 
   const paths = resolveDataPaths(env, cwd);
   await ensureDataPaths(paths);

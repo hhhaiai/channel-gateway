@@ -12,7 +12,10 @@
   "scripts": {
     "start": "node ./bin/channel-gateway.js",
     "test": "node --test --test-concurrency=1",
-    "check": "node ./scripts/check.mjs"
+    "check": "node ./scripts/check.mjs",
+    "postinstall": "node ./scripts/patch-openclaw-dist.mjs",
+    "patch:openclaw": "node ./scripts/patch-openclaw-dist.mjs",
+    "verify:openclaw-patch": "node ./scripts/patch-openclaw-dist.mjs --verify"
   },
   "dependencies": {
     "openclaw": "2026.6.11"
