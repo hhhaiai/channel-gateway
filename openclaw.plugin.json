@@ -1,0 +1,58 @@
+{
+  "id": "channel-gateway",
+  "activation": {
+    "onStartup": true
+  },
+  "enabledByDefault": false,
+  "contracts": {
+    "gatewayMethodDispatch": [
+      "authenticated-request"
+    ]
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "databasePath": {
+        "type": "string",
+        "minLength": 1,
+        "default": ".channel-gateway/channel-gateway.sqlite"
+      },
+      "ackTtlMs": {
+        "type": "integer",
+        "minimum": 1,
+        "default": 300000
+      },
+      "failedTtlMs": {
+        "type": "integer",
+        "minimum": 1,
+        "default": 86400000
+      },
+      "correlationTtlMs": {
+        "type": "integer",
+        "minimum": 1,
+        "default": 30000
+      },
+      "maxCorrelationEntries": {
+        "type": "integer",
+        "minimum": 1,
+        "default": 10000
+      },
+      "bodyLimitBytes": {
+        "type": "integer",
+        "minimum": 1,
+        "default": 1048576
+      },
+      "sseHeartbeatMs": {
+        "type": "integer",
+        "minimum": 1,
+        "default": 15000
+      },
+      "sseMaxQueue": {
+        "type": "integer",
+        "minimum": 1,
+        "default": 1000
+      }
+    }
+  }
+}

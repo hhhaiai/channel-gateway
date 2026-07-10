@@ -1,0 +1,31 @@
+{
+  "name": "channel-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "bin": {
+    "channel-gateway": "./bin/channel-gateway.js"
+  },
+  "scripts": {
+    "start": "node ./bin/channel-gateway.js",
+    "test": "node --test --test-concurrency=1",
+    "check": "node ./scripts/check.mjs"
+  },
+  "dependencies": {
+    "openclaw": "2026.6.11"
+  },
+  "optionalDependencies": {
+    "@openclaw/discord": "2026.6.11",
+    "@openclaw/slack": "2026.6.11",
+    "@openclaw/whatsapp": "2026.6.11"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.js"
+    ]
+  }
+}
+
