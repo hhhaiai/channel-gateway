@@ -1070,7 +1070,10 @@ Expected: PASS; artifacts are generated but ignored by Git.
 
 - [ ] **Step 3: Create Docker base/common profiles and Compose deployment**
 
-`Dockerfile` uses `node:22.20.0-bookworm-slim`, accepts `ARG CHANNEL_PROFILE=base`, runs `npm ci --omit=dev --omit=optional` for base and `npm ci --omit=dev` for common, verifies the Host patch, copies licenses, runs as `node`, exposes `18789`, and starts `node bin/channel-gateway.js`.
+`Dockerfile` uses `node:22.22.2-bookworm-slim`, the first Node 22 patch accepted by the current
+`hosted-git-info@10.1.1` transitive engine range. It accepts `ARG CHANNEL_PROFILE=base`, runs
+`npm ci --omit=dev --omit=optional` for base and `npm ci --omit=dev` for common, verifies the Host
+patch, copies licenses, runs as `node`, exposes `18789`, and starts `node bin/channel-gateway.js`.
 
 `docker-compose.yml` sets `CHANNEL_GATEWAY_DATA_DIR=/data`, `CHANNEL_GATEWAY_BIND=lan`, requires `CHANNEL_GATEWAY_TOKEN`, maps port `18789`, and persists config/state/credentials/workspace with named volumes. Its healthcheck calls unauthenticated OpenClaw `/healthz`; Bridge readiness remains the authenticated `/api/v1/health` endpoint.
 

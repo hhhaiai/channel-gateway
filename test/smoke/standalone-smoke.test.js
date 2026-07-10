@@ -199,7 +199,15 @@ test("real pinned Gateway preserves pending events across restart without model 
       const installed = await import(`../../node_modules/@openclaw/${channel}/package.json`, {
         with: { type: "json" },
       }).then(() => true, () => false);
-      if (installed) assert.match(JSON.stringify(firstChannels), new RegExp(channel, "i"));
+      if (installed) {
+        assert.deepEqual(
+          {
+            configured: firstChannels.channels?.[channel]?.configured,
+            running: firstChannels.channels?.[channel]?.running,
+          },
+          { configured: false, running: false },
+        );
+      }
     }
 
     await stopGateway(running);
