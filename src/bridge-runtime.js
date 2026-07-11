@@ -67,6 +67,7 @@ export function createBridgeRuntime({
   dispatchGatewayMethod,
   serviceVersion = "0.1.0",
   openclawVersion = "2026.6.11",
+  configService,
   httpHandler,
   eventPublisher,
   setIntervalFn = setInterval,
@@ -119,6 +120,7 @@ export function createBridgeRuntime({
         bodyLimitBytes,
         serviceVersion,
         openclawVersion,
+        configService,
       })
     : defaultHttpHandler);
 

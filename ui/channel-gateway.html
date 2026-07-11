@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Channel Gateway 控制台</title>
+  <link rel="stylesheet" href="/channel-gateway/app.css">
+</head>
+<body>
+  <main>
+    <header><h1>Channel Gateway</h1><p>一个互通房间可放入 N 个 QQ / Telegram 群；任一群发言会转发给其余群。</p></header>
+    <section class="card"><h2>连接</h2><label>Gateway Token <input id="token" type="password" autocomplete="off" placeholder="仅保留在当前页面内存"></label><button id="connect">连接并刷新</button><output id="notice" aria-live="polite"></output></section>
+    <section class="card"><h2>官方接入</h2><div class="guide"><article><h3>Telegram</h3><ol><li>在 BotFather 创建 bot，取得 token。</li><li>按 OpenClaw 官方 Telegram 文档配置 token。</li><li>若群内无需 @bot：BotFather → <code>/setprivacy</code> → Disable。</li></ol><code>openclaw channels status --probe</code></article><article><h3>QQ 群</h3><ol><li>按 OpenClaw QQBot 官方文档创建机器人并取得 <code>AppID:AppSecret</code>。</li><li>安装/启用 QQBot channel plugin 后执行：</li></ol><code>openclaw channels add --channel qqbot --token "AppID:AppSecret"</code></article></div><p class="muted">群 ID 填入 <code>conversationId</code>；<code>to</code> 是发送目标。不要把群 ID 写进 <code>groupAllowFrom</code>。</p></section>
+    <section class="card"><h2>Channel 状态</h2><div id="channels" class="muted">连接后加载。</div></section>
+    <section class="card"><h2>互通房间</h2><p>每个房间至少两个 endpoint。例：1 QQ + N TG、N QQ + 1 TG 或 N QQ + N TG。保存后必须重启服务生效。</p><div id="rooms"></div><button id="add-room">+ 添加互通房间</button> <button id="save" class="primary">保存 links</button></section>
+  </main>
+  <script type="module" src="/channel-gateway/app.js"></script>
+</body>
+</html>

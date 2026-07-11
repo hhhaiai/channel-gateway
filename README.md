@@ -413,3 +413,10 @@ shrinkwrap/bundled tree 的 peer/exact-range 漂移返回 `ESBOMPROBLEMS`，而 
 restart/ACK 恢复正常，并能发现已安装的 common Channel surface。真正的 QQ、Feishu、WhatsApp、
 Telegram、Discord、Slack、Teams、Matrix、Signal live provider proof 仍需要各平台真实 credentials、
 webhook/网络权限或本地 sidecar；fixture/contract 测试不能替代这项上线验证。
+
+## Channel Gateway 控制台与 QQ/TG N↔N
+
+打开 `http://127.0.0.1:18789/channel-gateway`，在当前页面输入 Gateway Bearer token 后即可查看 Channel 状态和编辑 links。一个 link 是一个互通房间，可添加任意多个 QQ/TG endpoint；任何 endpoint 发消息都会被 durable outbox 投递给房间内其它 endpoint。页面不保存 Provider 凭据，只展示官方接入步骤；保存 links 后需重启服务。
+
+- 操作步骤：[`操作手册.md`](操作手册.md) 第 14 节
+- 拓扑、交互、框架和代码调用逻辑图：[`docs/架构与交互图.md`](docs/架构与交互图.md)

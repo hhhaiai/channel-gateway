@@ -12,6 +12,12 @@ function createApi({ registrationMode = "full", pluginConfig = {}, runtime }) {
       registrationMode,
       pluginConfig,
       config: { gateway: { port: 18789 } },
+      runtime: {
+        config: {
+          current: () => ({ plugins: { entries: { "channel-gateway": { enabled: true, config: { links: [] } } } } }),
+          async mutateConfigFile() { return { persistedHash: "test" }; },
+        },
+      },
       logger: { debug() {}, info() {}, warn() {}, error() {} },
       on(name, handler, options) {
         hooks.set(name, { handler, options });
@@ -86,12 +92,17 @@ test("registers typed hooks and starts the worker only after Gateway startup", (
   ]);
   assert.equal(fixture.hooks.get("message_received").options.priority, 100);
   assert.equal(fixture.hooks.get("before_dispatch").options.timeoutMs, 5_000);
-  assert.equal(fixture.routes.length, 1);
+  assert.equal(fixture.routes.length, 2);
   assert.equal(fixture.routes[0].path, "/api/v1");
   assert.equal(fixture.routes[0].auth, "gateway");
   assert.equal(fixture.routes[0].match, "prefix");
   assert.equal(fixture.routes[0].gatewayRuntimeScopeSurface, "trusted-operator");
   assert.equal(fixture.routes[0].handler, runtime.handleHttp);
+  assert.equal(fixture.routes[1].path, "/channel-gateway");
+  assert.equal(fixture.routes[1].auth, "plugin");
+  assert.equal(fixture.routes[1].match, "prefix");
+  assert.equal(typeof fixture.routes[1].handler, "function");
+  assert.equal(typeof receivedOptions.configService.read, "function");
   assert.equal(fixture.lifecycles[0].id, "channel-gateway");
   assert.equal(runtime.started, 0);
   fixture.hooks.get("gateway_start").handler({}, {});

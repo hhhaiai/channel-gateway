@@ -1,6 +1,8 @@
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 
 import { createBridgeRuntime } from "./bridge-runtime.js";
+import { createConsoleAssetsHandler } from "./console-assets.js";
+import { createLinksConfigService } from "./links-config-service.js";
 import { createSelfApiSender } from "./self-api-sender.js";
 
 const DEFAULT_CONFIG = Object.freeze({
@@ -58,8 +60,10 @@ export function createChannelGatewayPlugin({
             token,
           })
         : undefined;
+      const configService = createLinksConfigService({ runtime: api.runtime });
       const runtime = runtimeFactory({
         ...config,
+        configService,
         logger: api.logger,
         sender,
         dispatchGatewayMethod,
@@ -81,6 +85,12 @@ export function createChannelGatewayPlugin({
         match: "prefix",
         gatewayRuntimeScopeSurface: "trusted-operator",
         handler: runtime.handleHttp,
+      });
+      api.registerHttpRoute({
+        path: "/channel-gateway",
+        auth: "plugin",
+        match: "prefix",
+        handler: createConsoleAssetsHandler(),
       });
       api.lifecycle.registerRuntimeLifecycle({
         id: "channel-gateway",
