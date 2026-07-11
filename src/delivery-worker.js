@@ -44,6 +44,12 @@ function controlledCode(value) {
     : "DELIVERY_FAILED";
 }
 
+function isRateLimitCode(code) {
+  return code === "RATE_LIMITED" ||
+    code === "TOO_MANY_REQUESTS" ||
+    code.includes("RATE_LIMIT");
+}
+
 export class DeliveryWorker {
   constructor({
     store,
@@ -54,6 +60,7 @@ export class DeliveryWorker {
     maxBatchSize = 100,
     maxConcurrency = 1,
     maxConcurrencyPerAccount = 1,
+    rateLimiter,
     now = Date.now,
     leaseTokenFactory = randomUUID,
     setTimer = setTimeout,
@@ -71,6 +78,13 @@ export class DeliveryWorker {
     positiveInteger("maxBatchSize", maxBatchSize);
     positiveInteger("maxConcurrency", maxConcurrency, 256);
     positiveInteger("maxConcurrencyPerAccount", maxConcurrencyPerAccount, 64);
+    if (rateLimiter !== undefined && (
+      typeof rateLimiter.tryAcquire !== "function" ||
+      typeof rateLimiter.unavailableAccounts !== "function" ||
+      typeof rateLimiter.block !== "function"
+    )) {
+      throw new TypeError("rateLimiter must implement tryAcquire, unavailableAccounts, and block");
+    }
 
     this.store = store;
     this.sender = sender;
@@ -80,6 +94,7 @@ export class DeliveryWorker {
     this.maxBatchSize = maxBatchSize;
     this.maxConcurrency = maxConcurrency;
     this.maxConcurrencyPerAccount = maxConcurrencyPerAccount;
+    this.rateLimiter = rateLimiter;
     this.now = now;
     this.leaseTokenFactory = leaseTokenFactory;
     this.setTimer = setTimer;
@@ -149,9 +164,24 @@ export class DeliveryWorker {
       const exponentialMs = Math.min(60_000, 1_000 * 2 ** Math.max(0, delivery.attempts - 1));
       const requestedMs = Number.isFinite(error?.retryAfterMs) ? error.retryAfterMs : 0;
       const delayMs = Math.max(GATEWAY_FAILURE_CACHE_MS, exponentialMs, requestedMs);
+      const failureCode = controlledCode(error?.code);
+      const failureAtMs = this.now();
+      if (
+        this.rateLimiter &&
+        isRateLimitCode(failureCode) &&
+        Number.isSafeInteger(requestedMs) &&
+        requestedMs > 0 &&
+        Number.isSafeInteger(failureAtMs + requestedMs)
+      ) {
+        this.rateLimiter.block(
+          accountDescriptor(delivery),
+          failureAtMs + requestedMs,
+          failureAtMs,
+        );
+      }
       this.store.retryDelivery(delivery.id, {
         leaseToken,
-        code: controlledCode(error?.code),
+        code: failureCode,
         nextAttemptAtMs: this.now() + delayMs,
         maxAttempts: retryable ? this.maxAttempts : delivery.attempts,
         updatedAtMs: this.now(),
@@ -173,6 +203,9 @@ export class DeliveryWorker {
             .filter(([, state]) => state.count >= this.maxConcurrencyPerAccount)
             .map(([key, state]) => [key, state.account]),
         );
+        for (const account of this.rateLimiter?.unavailableAccounts(this.now()) ?? []) {
+          saturatedAccounts.set(accountKey(account), account);
+        }
         const availableDestinationExclusions = [...activeDestinations.values()].filter(
           (destination) => !saturatedAccounts.has(accountKey(destination)),
         );
@@ -194,6 +227,9 @@ export class DeliveryWorker {
         const accountState = activeAccounts.get(activeAccountKey);
         if (accountState?.count >= this.maxConcurrencyPerAccount) {
           throw new Error("store claimed an excluded account");
+        }
+        if (this.rateLimiter && !this.rateLimiter.tryAcquire(account, this.now())) {
+          throw new Error("store claimed a rate-limited account");
         }
         activeDestinations.set(key, destination);
         activeAccounts.set(activeAccountKey, {

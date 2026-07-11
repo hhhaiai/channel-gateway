@@ -110,6 +110,9 @@ test("registers typed hooks and starts the worker only after Gateway startup", (
   assert.equal(typeof receivedOptions.configService.read, "function");
   assert.equal(receivedOptions.deliveryMaxConcurrency, 4);
   assert.equal(receivedOptions.deliveryMaxConcurrencyPerAccount, 2);
+  assert.equal(receivedOptions.deliveryRatePerSecondPerAccount, 5);
+  assert.equal(receivedOptions.deliveryRateBurstPerAccount, 10);
+  assert.deepEqual(receivedOptions.deliveryAccountRateLimits, []);
   assert.equal(receivedOptions.configService.read().effectiveDeliveryMaxConcurrency, 4);
   assert.equal(fixture.lifecycles[0].id, "channel-gateway");
   assert.equal(runtime.started, 0);
@@ -137,12 +140,28 @@ test("passes an explicit per-account delivery concurrency override", () => {
     pluginConfig: {
       links: [],
       deliveryMaxConcurrencyPerAccount: 5,
+      deliveryRatePerSecondPerAccount: 7,
+      deliveryRateBurstPerAccount: 11,
+      deliveryAccountRateLimits: [{
+        channel: "telegram",
+        accountId: "bot-a",
+        ratePerSecond: 20,
+        burst: 30,
+      }],
     },
   });
 
   plugin.register(fixture.api);
 
   assert.equal(receivedOptions.deliveryMaxConcurrencyPerAccount, 5);
+  assert.equal(receivedOptions.deliveryRatePerSecondPerAccount, 7);
+  assert.equal(receivedOptions.deliveryRateBurstPerAccount, 11);
+  assert.deepEqual(receivedOptions.deliveryAccountRateLimits, [{
+    channel: "telegram",
+    accountId: "bot-a",
+    ratePerSecond: 20,
+    burst: 30,
+  }]);
 });
 
 test("derives delivery concurrency from runtime-visible resources", () => {

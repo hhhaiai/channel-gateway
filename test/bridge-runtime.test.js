@@ -119,10 +119,26 @@ test("passes bounded delivery concurrency into the worker", async () => {
     sender: async () => ({ messageId: "unused" }),
     deliveryMaxConcurrency: 12,
     deliveryMaxConcurrencyPerAccount: 5,
+    deliveryRatePerSecondPerAccount: 7,
+    deliveryRateBurstPerAccount: 11,
+    deliveryAccountRateLimits: [{
+      channel: "telegram",
+      accountId: "bot-a",
+      ratePerSecond: 20,
+      burst: 30,
+    }],
   });
 
   assert.equal(runtime.worker.maxConcurrency, 12);
   assert.equal(runtime.worker.maxConcurrencyPerAccount, 5);
+  assert.deepEqual(runtime.worker.rateLimiter.defaultPolicy, {
+    ratePerSecond: 7,
+    burst: 11,
+  });
+  assert.equal(runtime.worker.rateLimiter.tryAcquire({
+    channel: "telegram",
+    accountId: "bot-a",
+  }), true);
   await runtime.close();
 });
 

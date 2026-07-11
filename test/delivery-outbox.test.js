@@ -320,10 +320,16 @@ test("can skip a saturated account while claiming another account", () => {
     nowMs: 1_000,
     leaseMs: 10_000,
     leaseToken: "lease-account-b",
-    excludedAccounts: [{
-      channel: active.destinationChannel,
-      accountId: active.destinationAccountId,
-    }],
+    excludedAccounts: [
+      ...Array.from({ length: 256 }, (_, index) => ({
+        channel: "unused",
+        accountId: `unused-${index}`,
+      })),
+      {
+        channel: active.destinationChannel,
+        accountId: active.destinationAccountId,
+      },
+    ],
   });
 
   assert.equal(active.id, "dlv_account_a1");

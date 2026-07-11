@@ -1,4 +1,5 @@
 import { createApiHandler } from "./api-handler.js";
+import { AccountRateLimiter } from "./account-rate-limiter.js";
 import { CorrelationBuffer } from "./correlation-buffer.js";
 import { DeliveryWorker } from "./delivery-worker.js";
 import { EventStore } from "./event-store.js";
@@ -63,6 +64,9 @@ export function createBridgeRuntime({
   deliveryLeaseMs = 60_000,
   deliveryMaxConcurrency = 4,
   deliveryMaxConcurrencyPerAccount = 2,
+  deliveryRatePerSecondPerAccount = 5,
+  deliveryRateBurstPerAccount = 10,
+  deliveryAccountRateLimits = [],
   bodyLimitBytes = 1_048_576,
   sseHeartbeatMs = 15_000,
   sseMaxQueue = 1_000,
@@ -95,6 +99,14 @@ export function createBridgeRuntime({
     maxEntries: maxCorrelationEntries,
     now,
   });
+  const rateLimiter = sender && compiledLinks.links.length > 0
+    ? new AccountRateLimiter({
+        ratePerSecond: deliveryRatePerSecondPerAccount,
+        burst: deliveryRateBurstPerAccount,
+        overrides: deliveryAccountRateLimits,
+        now,
+      })
+    : undefined;
   const worker = sender && compiledLinks.links.length > 0
     ? new DeliveryWorker({
         store,
@@ -104,6 +116,7 @@ export function createBridgeRuntime({
         leaseMs: deliveryLeaseMs,
         maxConcurrency: deliveryMaxConcurrency,
         maxConcurrencyPerAccount: deliveryMaxConcurrencyPerAccount,
+        rateLimiter,
         now,
       })
     : undefined;
@@ -229,6 +242,7 @@ export function createBridgeRuntime({
     correlation,
     links: compiledLinks,
     worker,
+    rateLimiter,
     handleHttp: resolvedHttpHandler,
     onMessageReceived,
     onBeforeDispatch,

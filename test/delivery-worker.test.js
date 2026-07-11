@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { AccountRateLimiter } from "../src/account-rate-limiter.js";
 import { DeliveryWorker } from "../src/delivery-worker.js";
 
 function createStore(job) {
@@ -52,8 +53,10 @@ function destinationKey(delivery) {
 function createQueueStore(inputJobs) {
   const jobs = inputJobs.map((job) => structuredClone(job));
   const completed = [];
+  const retried = [];
   return {
     completed,
+    retried,
     claimNextDelivery({
       leaseToken,
       excludedDestinations = [],
@@ -79,8 +82,9 @@ function createQueueStore(inputJobs) {
       completed.push(id);
       return { id, status: "sent" };
     },
-    retryDelivery() {
-      throw new Error("unexpected retry");
+    retryDelivery(id, options) {
+      retried.push({ id, ...options });
+      return { id, status: "pending" };
     },
   };
 }
@@ -267,6 +271,80 @@ test("requires per-account concurrency between one and 64", () => {
       maxConcurrencyPerAccount,
     }), /maxConcurrencyPerAccount/);
   }
+});
+
+test("pauses a burst-exhausted account while another account progresses", async () => {
+  let now = 1_000;
+  const rateLimiter = new AccountRateLimiter({
+    ratePerSecond: 1,
+    burst: 1,
+    now: () => now,
+  });
+  const store = createQueueStore([
+    queuedJob("dlv_a1", "chat-a1", "account-a"),
+    queuedJob("dlv_a2", "chat-a2", "account-a"),
+    queuedJob("dlv_b", "chat-b", "account-b"),
+  ]);
+  const worker = new DeliveryWorker({
+    store,
+    rateLimiter,
+    maxConcurrency: 3,
+    maxConcurrencyPerAccount: 2,
+    maxBatchSize: 3,
+    now: () => now,
+    sender: async () => ({ messageId: "sent" }),
+  });
+
+  await worker.tick();
+  assert.deepEqual(store.completed, ["dlv_a1", "dlv_b"]);
+
+  now += 1_000;
+  await worker.tick();
+  assert.deepEqual(store.completed, ["dlv_a1", "dlv_b", "dlv_a2"]);
+});
+
+test("honors account cooldown from a controlled rate-limit error", async () => {
+  let now = 1_000;
+  const rateLimiter = new AccountRateLimiter({
+    ratePerSecond: 100,
+    burst: 100,
+    now: () => now,
+  });
+  const store = createQueueStore([
+    queuedJob("dlv_a1", "chat-a1", "account-a"),
+    queuedJob("dlv_a2", "chat-a2", "account-a"),
+    queuedJob("dlv_b", "chat-b", "account-b"),
+  ]);
+  const worker = new DeliveryWorker({
+    store,
+    rateLimiter,
+    maxConcurrency: 3,
+    maxConcurrencyPerAccount: 1,
+    maxBatchSize: 3,
+    now: () => now,
+    async sender(request) {
+      if (request.idempotencyKey === "dlv_a1") {
+        throw Object.assign(new Error("rate limited"), {
+          code: "RATE_LIMITED",
+          retryable: true,
+          retryAfterMs: 5_000,
+        });
+      }
+      return { messageId: "sent" };
+    },
+  });
+
+  await worker.tick();
+  assert.deepEqual(store.completed, ["dlv_b"]);
+  assert.equal(store.retried[0].id, "dlv_a1");
+
+  now = 5_999;
+  await worker.tick();
+  assert.deepEqual(store.completed, ["dlv_b"]);
+
+  now = 6_000;
+  await worker.tick();
+  assert.deepEqual(store.completed, ["dlv_b", "dlv_a2"]);
 });
 
 test("requires a finite delivery concurrency between one and 256", () => {

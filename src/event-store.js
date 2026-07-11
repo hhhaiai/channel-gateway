@@ -83,8 +83,8 @@ function requireExcludedAccounts(value) {
   if (!Array.isArray(value)) {
     throw new TypeError("excludedAccounts must be an array");
   }
-  if (value.length > 256) {
-    throw new RangeError("excludedAccounts must contain at most 256 entries");
+  if (value.length > 10_000) {
+    throw new RangeError("excludedAccounts must contain at most 10000 entries");
   }
   return value.map((account, index) => {
     if (!account || typeof account !== "object" || Array.isArray(account)) {
@@ -439,9 +439,6 @@ export class EventStore extends EventEmitter {
     nonEmptyString("leaseToken", leaseToken);
     const excluded = requireExcludedDestinations(excludedDestinations);
     const accounts = requireExcludedAccounts(excludedAccounts);
-    if (excluded.length * 3 + accounts.length * 2 > 900) {
-      throw new RangeError("combined delivery claim exclusions are too large");
-    }
     const exclusionSql = excluded.map(
       () => `AND NOT (
              destination_channel = ?
@@ -454,16 +451,17 @@ export class EventStore extends EventEmitter {
       destination.accountId,
       destination.conversationId,
     ]);
-    const accountExclusionSql = accounts.map(
-      () => `AND NOT (
-             destination_channel = ?
-             AND destination_account_id = ?
-           )`,
-    ).join("\n");
-    const accountExclusionParams = accounts.flatMap((account) => [
-      account.channel,
-      account.accountId,
-    ]);
+    const accountExclusionSql = accounts.length === 0
+      ? ""
+      : `AND NOT EXISTS (
+             SELECT 1
+             FROM json_each(?) AS excluded_account
+             WHERE json_extract(excluded_account.value, '$.channel') = destination_channel
+               AND json_extract(excluded_account.value, '$.accountId') = destination_account_id
+           )`;
+    const accountExclusionParams = accounts.length === 0
+      ? []
+      : [JSON.stringify(accounts)];
     let claimed;
 
     this.#transaction(() => {
