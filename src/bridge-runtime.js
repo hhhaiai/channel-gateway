@@ -11,6 +11,7 @@ import { createGatewayRpc } from "./gateway-rpc.js";
 import { HealthState } from "./health-state.js";
 import { compileLinks, planFanout, stripBridgeMarker } from "./route-links.js";
 import { SseHub } from "./sse-hub.js";
+import { assertGatewayStorage } from "./storage-contract.js";
 
 const HANDLED = Object.freeze({ handled: true });
 
@@ -95,6 +96,10 @@ export function createBridgeRuntime({
   }
 
   const compiledLinks = links?.sourceIndex ? links : compileLinks(links);
+  assertGatewayStorage(store, {
+    deliveries: Boolean(sender && compiledLinks.links.length > 0),
+    api: Boolean(dispatchGatewayMethod),
+  });
   const health = new HealthState({ now });
   const publisher = eventPublisher ?? (typeof store.listPending === "function"
     ? new SseHub({

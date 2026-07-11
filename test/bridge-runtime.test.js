@@ -111,6 +111,30 @@ test("cannot restart the delivery worker after runtime close", async () => {
   assert.equal(runtime.worker.started, false);
 });
 
+test("runs against a delegating storage adapter without depending on EventStore identity", async () => {
+  const sqlite = new (await import("../src/event-store.js")).EventStore(":memory:");
+  const adapter = new Proxy({ backend: "delegating-test" }, {
+    get(target, property) {
+      if (property in target) return target[property];
+      const value = sqlite[property];
+      return typeof value === "function" ? value.bind(sqlite) : value;
+    },
+  });
+  const runtime = createBridgeRuntime({ store: adapter, links: [], logger: silentLogger });
+  assert.equal(runtime.store, adapter);
+  runtime.onBeforeDispatch({
+    id: "message-1",
+    content: "hello",
+    senderId: "user-1",
+  }, {
+    channelId: "telegram",
+    accountId: "default",
+    conversationId: "chat-1",
+  });
+  assert.equal(sqlite.pendingCount(), 1);
+  await runtime.close();
+});
+
 test("passes bounded delivery concurrency into the worker", async () => {
   const transformer = async () => ({ message: "summary" });
   const runtime = createBridgeRuntime({

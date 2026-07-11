@@ -5,6 +5,7 @@ import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { mergeNonEmpty } from "./event-normalizer.js";
+import { GATEWAY_STORAGE_CONTRACT_VERSION } from "./storage-contract.js";
 import {
   aggregateDeliveryRequests,
   isAggregationCompatible,
@@ -718,6 +719,17 @@ export class EventStore extends EventEmitter {
       counts[row.status] = Number(row.count);
     }
     return counts;
+  }
+
+  storageCapabilities() {
+    return {
+      contractVersion: GATEWAY_STORAGE_CONTRACT_VERSION,
+      backend: "sqlite",
+      durable: true,
+      atomicFanout: true,
+      aggregateLeases: true,
+      transformLeaseCas: true,
+    };
   }
 
   deliveryAccountStats() {
