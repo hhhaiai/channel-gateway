@@ -21,7 +21,7 @@ const CHANNELS = [
 const blankEndpoint = (channel = "telegram") => ({
   id: "", channel, accountId: "default", conversationId: "", to: "", receive: true, send: true,
 });
-const blankRoom = () => ({ id: "", endpoints: [blankEndpoint(), blankEndpoint()] });
+const blankRoom = (channel) => ({ id: "", endpoints: [blankEndpoint(channel), blankEndpoint()] });
 
 function notice(message, error = false) {
   const out = $("#notice");
@@ -115,8 +115,8 @@ function renderRooms() {
 }
 
 function addEndpointForChannel(channel) {
-  if (state.links.length === 0) state.links.push(blankRoom());
-  state.links[0].endpoints.push(blankEndpoint(channel.id));
+  if (state.links.length === 0) state.links.push(blankRoom(channel.id));
+  else state.links[0].endpoints.push(blankEndpoint(channel.id));
   renderRooms();
   notice(`${channel.name} endpoint 已加入第一个互通房间；请填写 conversationId 与 to。`);
 }

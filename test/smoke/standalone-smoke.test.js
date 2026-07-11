@@ -190,6 +190,13 @@ test("real pinned Gateway preserves pending events across restart without model 
   try {
     running = startGateway(dataDir, port);
     await waitForReady(baseUrl, running);
+    const consolePage = await fetch(`${baseUrl}/channel-gateway`);
+    assert.equal(consolePage.status, 200);
+    assert.match(consolePage.headers.get("content-security-policy") ?? "", /default-src 'none'/);
+    assert.match(await consolePage.text(), /id="channel-cards"/);
+    const consoleApp = await fetch(`${baseUrl}/channel-gateway/app.js`);
+    assert.equal(consoleApp.status, 200);
+    assert.match(await consoleApp.text(), /添加到互通房间/);
     assert.equal((await api(baseUrl, "/api/v1/health")).openclawVersion, "2026.6.11");
     assert.deepEqual((await api(baseUrl, "/api/v1/events")).items, [event]);
     const firstChannels = await api(baseUrl, "/api/v1/channels");
