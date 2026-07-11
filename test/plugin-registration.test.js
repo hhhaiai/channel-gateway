@@ -65,6 +65,11 @@ test("registers typed hooks and starts the worker only after Gateway startup", (
       receivedOptions = options;
       return runtime;
     },
+    resourceProbe: () => ({
+      cpuCount: 2,
+      memoryLimitBytes: 4 * 1024 ** 3,
+      memorySource: "host",
+    }),
     env: { OPENCLAW_GATEWAY_TOKEN: "secret" },
   });
   const fixture = createApi({
@@ -111,6 +116,48 @@ test("registers typed hooks and starts the worker only after Gateway startup", (
   assert.equal(receivedOptions.sender instanceof Function, true);
 });
 
+test("derives delivery concurrency from runtime-visible resources", () => {
+  let receivedOptions;
+  const plugin = createChannelGatewayPlugin({
+    dispatchGatewayMethod: async () => ({ ok: true, payload: {} }),
+    runtimeFactory(options) {
+      receivedOptions = options;
+      return fakeRuntime();
+    },
+    resourceProbe: () => ({
+      cpuCount: 8,
+      memoryLimitBytes: 8 * 1024 ** 3,
+      memorySource: "constraint",
+    }),
+    env: {},
+  });
+
+  plugin.register(createApi({ pluginConfig: { links: [] } }).api);
+
+  assert.equal(receivedOptions.deliveryMaxConcurrency, 16);
+});
+
+test("lets the environment override detected delivery concurrency", () => {
+  let receivedOptions;
+  const plugin = createChannelGatewayPlugin({
+    dispatchGatewayMethod: async () => ({ ok: true, payload: {} }),
+    runtimeFactory(options) {
+      receivedOptions = options;
+      return fakeRuntime();
+    },
+    resourceProbe: () => ({
+      cpuCount: 1,
+      memoryLimitBytes: 256 * 1024 ** 2,
+      memorySource: "constraint",
+    }),
+    env: { CHANNEL_GATEWAY_DELIVERY_MAX_CONCURRENCY: "9" },
+  });
+
+  plugin.register(createApi({ pluginConfig: { links: [] } }).api);
+
+  assert.equal(receivedOptions.deliveryMaxConcurrency, 9);
+});
+
 test("passes an explicit delivery concurrency override to the runtime", () => {
   let receivedOptions;
   const plugin = createChannelGatewayPlugin({
@@ -119,6 +166,12 @@ test("passes an explicit delivery concurrency override to the runtime", () => {
       receivedOptions = options;
       return fakeRuntime();
     },
+    resourceProbe: () => ({
+      cpuCount: 1,
+      memoryLimitBytes: 256 * 1024 ** 2,
+      memorySource: "constraint",
+    }),
+    env: { CHANNEL_GATEWAY_DELIVERY_MAX_CONCURRENCY: "8" },
   });
   const fixture = createApi({
     pluginConfig: {
@@ -131,6 +184,29 @@ test("passes an explicit delivery concurrency override to the runtime", () => {
   plugin.register(fixture.api);
 
   assert.equal(receivedOptions.deliveryMaxConcurrency, 12);
+});
+
+test("rejects invalid environment concurrency before runtime construction", () => {
+  let constructed = 0;
+  const plugin = createChannelGatewayPlugin({
+    dispatchGatewayMethod: async () => ({ ok: true, payload: {} }),
+    runtimeFactory() {
+      constructed += 1;
+      return fakeRuntime();
+    },
+    resourceProbe: () => ({
+      cpuCount: 2,
+      memoryLimitBytes: 4 * 1024 ** 3,
+      memorySource: "host",
+    }),
+    env: { CHANNEL_GATEWAY_DELIVERY_MAX_CONCURRENCY: "unbounded" },
+  });
+
+  assert.throws(
+    () => plugin.register(createApi({ pluginConfig: { links: [] } }).api),
+    /CHANNEL_GATEWAY_DELIVERY_MAX_CONCURRENCY/,
+  );
+  assert.equal(constructed, 0);
 });
 
 test("does not construct runtime outside full registration mode", () => {

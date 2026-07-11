@@ -3,6 +3,10 @@ import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { createBridgeRuntime } from "./bridge-runtime.js";
 import { createConsoleAssetsHandler } from "./console-assets.js";
 import { createLinksConfigService } from "./links-config-service.js";
+import {
+  detectRuntimeResources,
+  resolveDeliveryMaxConcurrency,
+} from "./resource-limits.js";
 import { createSelfApiSender } from "./self-api-sender.js";
 
 const DEFAULT_CONFIG = Object.freeze({
@@ -15,7 +19,6 @@ const DEFAULT_CONFIG = Object.freeze({
   deliveryPollMs: 1_000,
   deliveryMaxAttempts: 5,
   deliveryLeaseMs: 60_000,
-  deliveryMaxConcurrency: 4,
   bodyLimitBytes: 1_048_576,
   sseHeartbeatMs: 15_000,
   sseMaxQueue: 1_000,
@@ -34,6 +37,7 @@ export function createChannelGatewayPlugin({
   dispatchGatewayMethod,
   runtimeFactory = createBridgeRuntime,
   senderFactory = createSelfApiSender,
+  resourceProbe = detectRuntimeResources,
   env = process.env,
 } = {}) {
   if (typeof dispatchGatewayMethod !== "function") {
@@ -49,7 +53,17 @@ export function createChannelGatewayPlugin({
         return;
       }
 
-      const config = { ...DEFAULT_CONFIG, ...(api.pluginConfig ?? {}) };
+      const pluginConfig = api.pluginConfig ?? {};
+      const concurrency = resolveDeliveryMaxConcurrency({
+        configured: pluginConfig.deliveryMaxConcurrency,
+        env,
+        resources: resourceProbe(),
+      });
+      const config = {
+        ...DEFAULT_CONFIG,
+        ...pluginConfig,
+        deliveryMaxConcurrency: concurrency.value,
+      };
       const hasLinks = Array.isArray(config.links) && config.links.length > 0;
       const token = env.OPENCLAW_GATEWAY_TOKEN;
       if (hasLinks && (typeof token !== "string" || token.trim() === "")) {

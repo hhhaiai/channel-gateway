@@ -71,8 +71,7 @@
       "deliveryMaxConcurrency": {
         "type": "integer",
         "minimum": 1,
-        "maximum": 256,
-        "default": 4
+        "maximum": 256
       },
       "links": {
         "type": "array",
