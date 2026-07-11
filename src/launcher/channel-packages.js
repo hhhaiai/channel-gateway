@@ -6,7 +6,7 @@ export const OPENCLAW_VERSION = "2026.6.11";
 const OFFICIAL_CHANNEL_PACKAGES = Object.freeze([
   "discord", "feishu", "googlechat", "irc", "line", "matrix", "mattermost", "msteams",
   "nextcloud-talk", "nostr", "qqbot", "raft", "signal", "slack", "sms", "synology-chat",
-  "tlon", "twitch", "voice-call", "whatsapp", "zalo", "zalouser",
+  "tlon", "twitch", "whatsapp", "zalo", "zalouser",
 ].map((id) => ({ id, name: `@openclaw/${id}` })));
 
 async function pathExists(candidatePath) {
