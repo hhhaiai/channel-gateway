@@ -101,10 +101,10 @@ test("four linked endpoints recover fan-out, suppress echoes, and preserve reply
   });
 
   await second.worker.tick();
-  assert.deepEqual(sends.map(({ channel }) => channel), [
+  assert.deepEqual(sends.map(({ channel }) => channel).sort(), [
     "feishu",
-    "whatsapp",
     "telegram",
+    "whatsapp",
   ]);
   assert.deepEqual(second.store.deliveryCounts(), {
     pending: 0,
@@ -155,6 +155,7 @@ test("four linked endpoints recover fan-out, suppress echoes, and preserve reply
 
   await second.worker.tick();
   const replySends = sends.slice(3);
+  assert.equal(replySends.length, 3);
   assert.deepEqual(
     Object.fromEntries(replySends.map((request) => [request.channel, request.replyToId])),
     {
