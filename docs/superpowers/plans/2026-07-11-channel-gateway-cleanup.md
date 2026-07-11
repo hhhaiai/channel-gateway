@@ -23,3 +23,8 @@
 ## 验证与提交
 
 每一个 pass 后运行对应目标测试；最终运行 `npm test`、`npm run check`、`npm run verify:openclaw-patch`。每个通过验证的 pass 单独进行本地 Git 提交；不 push。
+
+## 执行记录
+
+- 完成 Pass 1：删除 `ui/channel-gateway.js` 中同值条件元素构造与未在编辑器中展示的 `threadId:null` 默认值；服务端 `compileLinks()` 继续是该可选字段的唯一 canonical default。
+- Pass 2 复核结论：`links-config-service` 的重复读取发生在两个不同信任边界（当前 runtime snapshot 与 mutation draft），不能合并而不模糊并发冲突检查；`channel-packages` 的 path/manifest 校验步骤均有独立安全目的。因此本轮不为减少行数引入抽象或改变边界。
