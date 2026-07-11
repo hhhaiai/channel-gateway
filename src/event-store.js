@@ -315,6 +315,11 @@ export class EventStore extends EventEmitter {
     this.database.exec(
       "CREATE INDEX IF NOT EXISTS deliveries_aggregate ON deliveries(aggregate_id, aggregate_index)",
     );
+    this.database.exec(
+      `CREATE INDEX IF NOT EXISTS deliveries_aggregation_candidates
+       ON deliveries(link_id, destination_endpoint_id, status, attempts, next_attempt_at_ms, seq)
+       WHERE aggregate_id IS NULL`,
+    );
   }
 
   enqueue(event, { deliveries = [] } = {}) {

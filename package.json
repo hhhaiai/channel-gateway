@@ -10,6 +10,7 @@
     "channel-gateway": "./bin/channel-gateway.js"
   },
   "scripts": {
+    "benchmark": "node ./scripts/benchmark-gateway.mjs",
     "start": "node ./bin/channel-gateway.js",
     "test": "node --test --test-concurrency=1 'test/**/*.test.js'",
     "check": "node ./scripts/check.mjs",
