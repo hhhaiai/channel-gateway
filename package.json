@@ -26,8 +26,26 @@
   "optionalDependencies": {
     "@openclaw/discord": "2026.6.11",
     "@openclaw/feishu": "2026.6.11",
+    "@openclaw/googlechat": "2026.6.11",
+    "@openclaw/irc": "2026.6.11",
+    "@openclaw/line": "2026.6.11",
+    "@openclaw/matrix": "2026.6.11",
+    "@openclaw/mattermost": "2026.6.11",
+    "@openclaw/msteams": "2026.6.11",
+    "@openclaw/nextcloud-talk": "2026.6.11",
+    "@openclaw/nostr": "2026.6.11",
+    "@openclaw/qqbot": "2026.6.11",
+    "@openclaw/raft": "2026.6.11",
+    "@openclaw/signal": "2026.6.11",
     "@openclaw/slack": "2026.6.11",
-    "@openclaw/whatsapp": "2026.6.11"
+    "@openclaw/sms": "2026.6.11",
+    "@openclaw/synology-chat": "2026.6.11",
+    "@openclaw/tlon": "2026.6.11",
+    "@openclaw/twitch": "2026.6.11",
+    "@openclaw/voice-call": "2026.6.11",
+    "@openclaw/whatsapp": "2026.6.11",
+    "@openclaw/zalo": "2026.6.11",
+    "@openclaw/zalouser": "2026.6.11"
   },
   "openclaw": {
     "extensions": [

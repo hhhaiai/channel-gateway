@@ -10,8 +10,8 @@ COPY patches ./patches
 
 RUN case "$CHANNEL_PROFILE" in \
       base) npm ci --omit=dev --omit=optional ;; \
-      common) npm ci --omit=dev ;; \
-      *) echo "CHANNEL_PROFILE must be base or common" >&2; exit 2 ;; \
+      common|all) npm ci --omit=dev ;; \
+      *) echo "CHANNEL_PROFILE must be base, common, or all" >&2; exit 2 ;; \
     esac \
  && npm run verify:openclaw-patch \
  && npm cache clean --force
@@ -28,6 +28,7 @@ COPY --from=dependencies /app/node_modules ./node_modules
 COPY package.json package-lock.json index.js openclaw.plugin.json ./
 COPY bin ./bin
 COPY src ./src
+COPY ui ./ui
 COPY scripts ./scripts
 COPY patches ./patches
 COPY licenses ./licenses

@@ -21,7 +21,11 @@ test("serves a dependency-free console with strict static headers", async (t) =>
   const page = await fetch(`${server.baseUrl}/channel-gateway`);
   assert.equal(page.status, 200);
   assert.match(page.headers.get("content-security-policy"), /default-src 'none'/);
-  assert.match(await page.text(), /互通房间/);
+  const pageBody = await page.text();
+  assert.match(pageBody, /互通房间/);
+  assert.match(pageBody, /所有 OpenClaw Channel/);
+  assert.match(pageBody, /channels\/whatsapp/);
+  assert.match(pageBody, /channels\/wechat/);
 
   const app = await fetch(`${server.baseUrl}/channel-gateway/app.js`);
   assert.equal(app.status, 200);

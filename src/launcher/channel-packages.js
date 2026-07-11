@@ -4,11 +4,10 @@ import path from "node:path";
 export const OPENCLAW_VERSION = "2026.6.11";
 
 const OFFICIAL_CHANNEL_PACKAGES = Object.freeze([
-  { id: "discord", name: "@openclaw/discord" },
-  { id: "feishu", name: "@openclaw/feishu" },
-  { id: "slack", name: "@openclaw/slack" },
-  { id: "whatsapp", name: "@openclaw/whatsapp" },
-]);
+  "discord", "feishu", "googlechat", "irc", "line", "matrix", "mattermost", "msteams",
+  "nextcloud-talk", "nostr", "qqbot", "raft", "signal", "slack", "sms", "synology-chat",
+  "tlon", "twitch", "voice-call", "whatsapp", "zalo", "zalouser",
+].map((id) => ({ id, name: `@openclaw/${id}` })));
 
 async function pathExists(candidatePath) {
   try {

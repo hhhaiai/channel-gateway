@@ -89,51 +89,19 @@ test("rejects installed official packages with a mismatched version or channel i
   );
 });
 
-test("loads QQ only from an explicit absolute plugin path", async (t) => {
-  const directory = await mkdtemp(path.join(tmpdir(), "channel-gateway-qq-package-"));
+test("discovers every installed official package, including QQ", async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), "channel-gateway-official-package-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const serviceRoot = path.join(directory, "service");
-  const implicitQqRoot = builtInRoot(serviceRoot, "qqbot");
-  const explicitQqRoot = path.join(directory, "operator-plugins", "qqbot");
-  await writePackage(implicitQqRoot, { name: "@openclaw/qqbot", id: "qqbot" });
-  await writePackage(explicitQqRoot, {
-    name: "@openclaw/qqbot",
-    id: "qqbot",
-    version: "1.4.0",
-    minHostVersion: ">=2026.4.10",
-    pluginApi: ">=2026.5.27",
-  });
+  const qqRoot = builtInRoot(serviceRoot, "qqbot");
+  const signalRoot = builtInRoot(serviceRoot, "signal");
+  await writePackage(qqRoot, { name: "@openclaw/qqbot", id: "qqbot" });
+  await writePackage(signalRoot, { name: "@openclaw/signal", id: "signal" });
 
-  assert.deepEqual(await discoverChannelPackages({ serviceRoot, env: {} }), []);
-  assert.deepEqual(
-    await discoverChannelPackages({
-      serviceRoot,
-      env: { CHANNEL_GATEWAY_PLUGIN_PATHS: explicitQqRoot },
-    }),
-    [
-      {
-        id: "qqbot",
-        name: "@openclaw/qqbot",
-        version: "1.4.0",
-        rootDir: explicitQqRoot,
-      },
-    ],
-  );
-
-  await writePackage(explicitQqRoot, {
-    name: "@openclaw/qqbot",
-    id: "qqbot",
-    version: "1.5.0",
-    minHostVersion: ">=2026.7.1",
-  });
-  await assert.rejects(
-    () =>
-      discoverChannelPackages({
-        serviceRoot,
-        env: { CHANNEL_GATEWAY_PLUGIN_PATHS: explicitQqRoot },
-      }),
-    /requires OpenClaw >=2026\.7\.1/,
-  );
+  assert.deepEqual(await discoverChannelPackages({ serviceRoot, env: {} }), [
+    { id: "qqbot", name: "@openclaw/qqbot", version: OPENCLAW_VERSION, rootDir: qqRoot },
+    { id: "signal", name: "@openclaw/signal", version: OPENCLAW_VERSION, rootDir: signalRoot },
+  ]);
 });
 
 test("validates every explicit plugin path and manifest", async (t) => {
