@@ -109,6 +109,7 @@ test("registers typed hooks and starts the worker only after Gateway startup", (
   assert.equal(typeof fixture.routes[1].handler, "function");
   assert.equal(typeof receivedOptions.configService.read, "function");
   assert.equal(receivedOptions.deliveryMaxConcurrency, 4);
+  assert.equal(receivedOptions.configService.read().effectiveDeliveryMaxConcurrency, 4);
   assert.equal(fixture.lifecycles[0].id, "channel-gateway");
   assert.equal(runtime.started, 0);
   fixture.hooks.get("gateway_start").handler({}, {});

@@ -24,6 +24,9 @@ test("serves a dependency-free console with strict static headers", async (t) =>
   const pageBody = await page.text();
   assert.match(pageBody, /互通房间/);
   assert.match(pageBody, /所有 OpenClaw Channel/);
+  assert.match(pageBody, /id="delivery-concurrency-auto"/);
+  assert.match(pageBody, /id="delivery-concurrency"/);
+  assert.match(pageBody, /id="resource-summary"/);
 
   const app = await fetch(`${server.baseUrl}/channel-gateway/app.js`);
   assert.equal(app.status, 200);
@@ -32,6 +35,9 @@ test("serves a dependency-free console with strict static headers", async (t) =>
   assert.match(appBody, /links\/config/);
   assert.match(appBody, /\["whatsapp", "WhatsApp"/);
   assert.match(appBody, /\["wechat", "WeChat"/);
+  assert.match(appBody, /effectiveDeliveryMaxConcurrency/);
+  assert.match(appBody, /deliveryMaxConcurrency:/);
+  assert.match(appBody, /deliveryConcurrencyValue/);
   assert.equal((await fetch(`${server.baseUrl}/channel-gateway/unknown`)).status, 404);
 });
 

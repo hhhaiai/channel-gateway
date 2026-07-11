@@ -1,5 +1,9 @@
 import { createHash } from "node:crypto";
 
+import {
+  DELIVERY_CONCURRENCY_HARD_MAX,
+  resolveDeliveryMaxConcurrency,
+} from "./resource-limits.js";
 import { compileLinks } from "./route-links.js";
 
 const LINK_KEYS = new Set(["id", "endpoints"]);
@@ -9,7 +13,7 @@ const ENDPOINT_KEYS = new Set([
 
 export class ConfigConflictError extends Error {
   constructor() {
-    super("links configuration changed; reload before saving");
+    super("channel-gateway configuration changed; reload before saving");
     this.name = "ConfigConflictError";
     this.code = "CONFIG_CONFLICT";
   }
@@ -46,12 +50,8 @@ function canonicalLinks(value) {
   return compileLinks(value).links;
 }
 
-function revision(links) {
-  return createHash("sha256").update(JSON.stringify(links)).digest("hex");
-}
-
-function linksFrom(config) {
-  return config?.plugins?.entries?.["channel-gateway"]?.config?.links ?? [];
+function revision(configuration) {
+  return createHash("sha256").update(JSON.stringify(configuration)).digest("hex");
 }
 
 function entryFrom(config) {
@@ -62,37 +62,81 @@ function entryFrom(config) {
   return entry;
 }
 
-export function createLinksConfigService({ runtime }) {
+function editableConfiguration(config) {
+  const entry = entryFrom(config);
+  return {
+    links: canonicalLinks(entry.config.links ?? []),
+    deliveryMaxConcurrency: entry.config.deliveryMaxConcurrency ?? null,
+  };
+}
+
+export function createLinksConfigService({ runtime, env = process.env, resources }) {
   if (!runtime?.config || typeof runtime.config.current !== "function" ||
     typeof runtime.config.mutateConfigFile !== "function") {
     throw new TypeError("runtime.config must provide current and mutateConfigFile");
   }
 
-  function read() {
-    const links = canonicalLinks(linksFrom(runtime.config.current()));
-    return { links, revision: revision(links), restartRequired: true };
+  function present(configuration) {
+    const resolved = resolveDeliveryMaxConcurrency({
+      configured: configuration.deliveryMaxConcurrency ?? undefined,
+      env,
+      resources,
+    });
+    return {
+      ...configuration,
+      effectiveDeliveryMaxConcurrency: resolved.value,
+      deliveryMaxConcurrencySource: resolved.source,
+      deliveryMaxConcurrencyHardMax: DELIVERY_CONCURRENCY_HARD_MAX,
+      resources: { ...resolved.resources },
+      revision: revision(configuration),
+      restartRequired: true,
+    };
   }
 
-  async function update({ links, revision: expectedRevision } = {}) {
+  function read() {
+    return present(editableConfiguration(runtime.config.current()));
+  }
+
+  async function update(input = {}) {
+    const { links, revision: expectedRevision } = input;
     if (typeof expectedRevision !== "string" || !/^[a-f0-9]{64}$/.test(expectedRevision)) {
       throw new TypeError("revision must be a SHA-256 hex digest");
     }
     const nextLinks = canonicalLinks(links);
+    const updatesConcurrency = Object.hasOwn(input, "deliveryMaxConcurrency");
+    const requestedConcurrency = input.deliveryMaxConcurrency;
+    if (updatesConcurrency && requestedConcurrency !== null) {
+      resolveDeliveryMaxConcurrency({
+        configured: requestedConcurrency,
+        env,
+        resources,
+      });
+    }
+    let nextConfiguration;
     await runtime.config.mutateConfigFile({
       base: "source",
       afterWrite: {
         mode: "none",
-        reason: "channel-gateway links require service restart",
+        reason: "channel-gateway configuration requires service restart",
       },
       mutate(draft) {
-        const currentLinks = canonicalLinks(linksFrom(draft));
-        if (revision(currentLinks) !== expectedRevision) {
+        const current = editableConfiguration(draft);
+        if (revision(current) !== expectedRevision) {
           throw new ConfigConflictError();
         }
-        entryFrom(draft).config.links = nextLinks;
+        const entry = entryFrom(draft);
+        entry.config.links = nextLinks;
+        if (updatesConcurrency) {
+          if (requestedConcurrency === null) {
+            delete entry.config.deliveryMaxConcurrency;
+          } else {
+            entry.config.deliveryMaxConcurrency = requestedConcurrency;
+          }
+        }
+        nextConfiguration = editableConfiguration(draft);
       },
     });
-    return { links: nextLinks, revision: revision(nextLinks), restartRequired: true };
+    return present(nextConfiguration);
   }
 
   return { read, update };

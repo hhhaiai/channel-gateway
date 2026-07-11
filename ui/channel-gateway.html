@@ -28,11 +28,24 @@
       <div id="channels" class="muted">连接后加载。</div>
     </section>
     <section class="card">
+      <h2>发送并发资源</h2>
+      <p id="resource-summary" class="muted">连接后加载 CPU、内存和当前有效并发。</p>
+      <label>
+        <input id="delivery-concurrency-auto" type="checkbox" checked>
+        根据当前容器或电脑资源自动计算
+      </label>
+      <label>
+        最大并发投递
+        <input id="delivery-concurrency" type="number" min="1" max="256" step="1" disabled>
+      </label>
+      <p class="muted">保存后需要重启服务；所有配置都受服务端硬上限约束。</p>
+    </section>
+    <section class="card">
       <h2>互通房间</h2>
       <p>每个房间至少两个 endpoint。添加 endpoint 后填写该平台的 <code>conversationId</code> 与 <code>to</code>；格式以该 Channel 的官方文档为准。保存后必须重启服务生效。</p>
       <div id="rooms"></div>
       <button id="add-room">+ 添加互通房间</button>
-      <button id="save" class="primary">保存 links</button>
+      <button id="save" class="primary">保存配置</button>
     </section>
   </main>
   <script type="module" src="/channel-gateway/app.js"></script>

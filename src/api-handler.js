@@ -5,6 +5,7 @@ const DEFAULT_BODY_LIMIT_BYTES = 1024 * 1024;
 const DEFAULT_EVENT_LIMIT = 100;
 const MAX_EVENT_LIMIT = 500;
 const DELIVERY_STATES = ["pending", "sending", "sent", "failed"];
+const LINK_CONFIG_KEYS = new Set(["links", "revision", "deliveryMaxConcurrency"]);
 
 function sendJson(response, statusCode, payload, extraHeaders = {}) {
   response.statusCode = statusCode;
@@ -209,8 +210,14 @@ export function createApiHandler({
         }
         if (!routeMethod(response, request.method, "PUT")) return;
         const body = await readJsonBody(request, { limitBytes: bodyLimitBytes });
-        if (Object.keys(body).length !== 2 || !("links" in body) || !("revision" in body)) {
-          throw new TypeError("link config body only accepts links and revision");
+        if (
+          !("links" in body) ||
+          !("revision" in body) ||
+          Object.keys(body).some((key) => !LINK_CONFIG_KEYS.has(key))
+        ) {
+          throw new TypeError(
+            "link config body requires links and revision and only accepts deliveryMaxConcurrency as an optional field",
+          );
         }
         success(response, await configService.update(body));
         return;

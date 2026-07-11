@@ -1,5 +1,11 @@
 const $ = (selector) => document.querySelector(selector);
-const state = { token: "", links: [], revision: null, channelStatus: null };
+const state = {
+  token: "",
+  links: [],
+  revision: null,
+  channelStatus: null,
+  configuration: null,
+};
 const ENDPOINT_FIELDS = [
   ["endpoint ID", "id", "text"], ["channel", "channel", "text"], ["account", "accountId", "text"],
   ["会话 conversationId", "conversationId", "text"], ["发送 to", "to", "text"],
@@ -199,12 +205,55 @@ function renderChannels(value) {
   root.append(pre);
 }
 
+function formatBytes(value) {
+  if (!Number.isSafeInteger(value) || value < 1) return "unknown";
+  return `${(value / 1024 ** 3).toFixed(2)} GiB`;
+}
+
+function renderResourceSettings(configuration) {
+  state.configuration = configuration;
+  const automatic = configuration.deliveryMaxConcurrency === null;
+  const auto = $("#delivery-concurrency-auto");
+  const input = $("#delivery-concurrency");
+  auto.checked = automatic;
+  input.disabled = automatic;
+  input.max = String(configuration.deliveryMaxConcurrencyHardMax);
+  input.value = String(
+    automatic
+      ? configuration.effectiveDeliveryMaxConcurrency
+      : configuration.deliveryMaxConcurrency,
+  );
+  const source = {
+    config: "持久化配置",
+    environment: "环境变量",
+    detected: "资源自动探测",
+  }[configuration.deliveryMaxConcurrencySource] ?? configuration.deliveryMaxConcurrencySource;
+  $("#resource-summary").textContent = [
+    `当前有效并发 ${configuration.effectiveDeliveryMaxConcurrency}`,
+    `来源 ${source}`,
+    `CPU ${configuration.resources.cpuCount}`,
+    `内存上限 ${formatBytes(configuration.resources.memoryLimitBytes)}`,
+    `内存来源 ${configuration.resources.memorySource}`,
+  ].join("；");
+}
+
+function deliveryConcurrencyValue() {
+  if ($("#delivery-concurrency-auto").checked) return null;
+  const value = Number($("#delivery-concurrency").value);
+  const maximum = state.configuration.deliveryMaxConcurrencyHardMax;
+  if (!Number.isSafeInteger(value) || value < 1 || value > maximum) {
+    throw new Error(`最大并发投递必须是 1 到 ${maximum} 的整数`);
+  }
+  return value;
+}
+
 async function refresh() {
   state.token = $("#token").value.trim();
   const [config, channels] = await Promise.all([api("/links/config"), api("/channels?probe=true")]);
   state.links = config.links;
   state.revision = config.revision;
   state.channelStatus = channels;
+  renderResourceSettings(config);
   renderRooms();
   renderChannels(channels);
   renderChannelCards();
@@ -213,15 +262,27 @@ async function refresh() {
 
 $("#connect").onclick = () => refresh().catch((error) => notice(error.message, true));
 $("#add-room").onclick = () => { state.links.push(blankRoom()); renderRooms(); };
+$("#delivery-concurrency-auto").onchange = (event) => {
+  const input = $("#delivery-concurrency");
+  input.disabled = event.target.checked;
+  if (event.target.checked && state.configuration) {
+    input.value = String(state.configuration.effectiveDeliveryMaxConcurrency);
+  }
+};
 $("#save").onclick = async () => {
   try {
     const result = await api("/links/config", {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ links: state.links, revision: state.revision }),
+      body: JSON.stringify({
+        links: state.links,
+        revision: state.revision,
+        deliveryMaxConcurrency: deliveryConcurrencyValue(),
+      }),
     });
     state.links = result.links;
     state.revision = result.revision;
+    renderResourceSettings(result);
     renderRooms();
     notice("已保存到 OpenClaw 配置。请重启 channel-gateway 后生效。");
   } catch (error) {

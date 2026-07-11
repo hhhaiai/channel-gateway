@@ -54,10 +54,11 @@ export function createChannelGatewayPlugin({
       }
 
       const pluginConfig = api.pluginConfig ?? {};
+      const resources = resourceProbe();
       const concurrency = resolveDeliveryMaxConcurrency({
         configured: pluginConfig.deliveryMaxConcurrency,
         env,
-        resources: resourceProbe(),
+        resources,
       });
       const config = {
         ...DEFAULT_CONFIG,
@@ -75,7 +76,11 @@ export function createChannelGatewayPlugin({
             token,
           })
         : undefined;
-      const configService = createLinksConfigService({ runtime: api.runtime });
+      const configService = createLinksConfigService({
+        runtime: api.runtime,
+        env,
+        resources,
+      });
       const runtime = runtimeFactory({
         ...config,
         configService,

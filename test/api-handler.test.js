@@ -407,13 +407,29 @@ test("reads and saves full link configuration without weakening the sanitized st
             ],
           }],
           revision: "a".repeat(64),
+          deliveryMaxConcurrency: null,
+          effectiveDeliveryMaxConcurrency: 4,
+          deliveryMaxConcurrencySource: "detected",
+          deliveryMaxConcurrencyHardMax: 256,
+          resources: {
+            cpuCount: 2,
+            memoryLimitBytes: 4 * 1024 ** 3,
+            memorySource: "host",
+          },
           restartRequired: true,
         };
       },
       async update(body) {
         assert.equal(body.revision, "a".repeat(64));
         assert.equal(body.links[0].endpoints[1].to, "-1001");
-        return { ...this.read(), links: body.links };
+        assert.equal(body.deliveryMaxConcurrency, 12);
+        return {
+          ...this.read(),
+          links: body.links,
+          deliveryMaxConcurrency: 12,
+          effectiveDeliveryMaxConcurrency: 12,
+          deliveryMaxConcurrencySource: "config",
+        };
       },
     },
   });
@@ -425,6 +441,7 @@ test("reads and saves full link configuration without weakening the sanitized st
   assert.equal(response.status, 200);
   assert.equal(response.body.result.links[0].endpoints[1].to, "-1001");
   assert.equal(response.body.result.restartRequired, true);
+  assert.equal(response.body.result.effectiveDeliveryMaxConcurrency, 4);
 
   response = await json(await fetch(`${server.baseUrl}/api/v1/links/config`, {
     method: "PUT",
@@ -432,10 +449,12 @@ test("reads and saves full link configuration without weakening the sanitized st
     body: JSON.stringify({
       links: response.body.result.links,
       revision: response.body.result.revision,
+      deliveryMaxConcurrency: 12,
     }),
   }));
   assert.equal(response.status, 200);
   assert.equal(response.body.result.revision, "a".repeat(64));
+  assert.equal(response.body.result.effectiveDeliveryMaxConcurrency, 12);
 
   const status = await json(await fetch(`${server.baseUrl}/api/v1/links`));
   assert.equal(JSON.stringify(status.body).includes("-1001"), false);
