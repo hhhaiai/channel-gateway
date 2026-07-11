@@ -11,7 +11,7 @@
   },
   "scripts": {
     "start": "node ./bin/channel-gateway.js",
-    "test": "node --test --test-concurrency=1",
+    "test": "node --test --test-concurrency=1 'test/**/*.test.js'",
     "check": "node ./scripts/check.mjs",
     "postinstall": "node ./scripts/patch-openclaw-dist.mjs",
     "patch:openclaw": "node ./scripts/patch-openclaw-dist.mjs",
