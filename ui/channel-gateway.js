@@ -5,6 +5,7 @@ const state = {
   revision: null,
   channelStatus: null,
   configuration: null,
+  deliveryStatus: null,
 };
 const ENDPOINT_FIELDS = [
   ["endpoint ID", "id", "text"], ["channel", "channel", "text"], ["account", "accountId", "text"],
@@ -237,6 +238,79 @@ function renderResourceSettings(configuration) {
   ].join("；");
 }
 
+function statusLabel(status) {
+  return {
+    healthy: "正常",
+    recovering: "恢复中",
+    degraded: "异常（可重试）",
+    unavailable: "不可用",
+  }[status] ?? status ?? "未知";
+}
+
+function timeLabel(value) {
+  return Number.isSafeInteger(value) ? new Date(value).toLocaleString() : "—";
+}
+
+function appendCell(row, value, className) {
+  const cell = document.createElement("td");
+  cell.textContent = value;
+  if (className) cell.className = className;
+  row.append(cell);
+}
+
+function renderDeliveryHealth(value) {
+  state.deliveryStatus = value;
+  const channels = Array.isArray(value?.channels) ? value.channels : [];
+  const accounts = Array.isArray(value?.accounts) ? value.accounts : [];
+  const limits = new Map((Array.isArray(value?.rateLimits) ? value.rateLimits : []).map((item) => [
+    JSON.stringify([item.channel, item.accountId]), item,
+  ]));
+
+  const channelRoot = $("#delivery-channels");
+  channelRoot.replaceChildren();
+  if (channels.length === 0) {
+    const empty = document.createElement("span");
+    empty.className = "muted";
+    empty.textContent = "当前没有投递账号数据。";
+    channelRoot.append(empty);
+  } else {
+    for (const channel of channels) {
+      const card = document.createElement("article");
+      card.className = `health-card status-${channel.status}`;
+      const title = document.createElement("strong");
+      title.textContent = `${channel.channel} · ${statusLabel(channel.status)}`;
+      const summary = document.createElement("span");
+      summary.textContent = `${channel.accounts} 个账号；等待 ${channel.pending}；发送中 ${channel.sending}；失败 ${channel.failed}`;
+      card.append(title, summary);
+      channelRoot.append(card);
+    }
+  }
+
+  const accountRoot = $("#delivery-accounts");
+  accountRoot.replaceChildren();
+  if (accounts.length === 0) {
+    const row = document.createElement("tr");
+    appendCell(row, "当前没有投递账号数据。", "muted empty-row");
+    row.firstChild.colSpan = 7;
+    accountRoot.append(row);
+    return;
+  }
+  for (const account of accounts) {
+    const limit = limits.get(JSON.stringify([account.channel, account.accountId]));
+    const row = document.createElement("tr");
+    appendCell(row, `${account.channel} / ${account.accountId}`);
+    appendCell(row, statusLabel(account.status), `status-text status-${account.status}`);
+    appendCell(row, account.errorCode ?? "—");
+    appendCell(row, `等待 ${account.pending} / 发送中 ${account.sending} / 失败 ${account.failed}`);
+    appendCell(row, timeLabel(account.nextRetryAtMs));
+    appendCell(row, limit
+      ? `${limit.ratePerSecond}/s；${limit.tokens}/${limit.burst}`
+      : "尚无活动采样");
+    appendCell(row, limit?.blockedUntilMs ? timeLabel(limit.blockedUntilMs) : "—");
+    accountRoot.append(row);
+  }
+}
+
 function deliveryConcurrencyValue() {
   if ($("#delivery-concurrency-auto").checked) return null;
   const value = Number($("#delivery-concurrency").value);
@@ -249,11 +323,16 @@ function deliveryConcurrencyValue() {
 
 async function refresh() {
   state.token = $("#token").value.trim();
-  const [config, channels] = await Promise.all([api("/links/config"), api("/channels?probe=true")]);
+  const [config, channels, delivery] = await Promise.all([
+    api("/links/config"),
+    api("/channels?probe=true"),
+    api("/delivery/status"),
+  ]);
   state.links = config.links;
   state.revision = config.revision;
   state.channelStatus = channels;
   renderResourceSettings(config);
+  renderDeliveryHealth(delivery);
   renderRooms();
   renderChannels(channels);
   renderChannelCards();

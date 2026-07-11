@@ -27,6 +27,8 @@ test("serves a dependency-free console with strict static headers", async (t) =>
   assert.match(pageBody, /id="delivery-concurrency-auto"/);
   assert.match(pageBody, /id="delivery-concurrency"/);
   assert.match(pageBody, /id="resource-summary"/);
+  assert.match(pageBody, /id="delivery-health"/);
+  assert.match(pageBody, /id="delivery-accounts"/);
 
   const app = await fetch(`${server.baseUrl}/channel-gateway/app.js`);
   assert.equal(app.status, 200);
@@ -38,6 +40,8 @@ test("serves a dependency-free console with strict static headers", async (t) =>
   assert.match(appBody, /effectiveDeliveryMaxConcurrency/);
   assert.match(appBody, /deliveryMaxConcurrency:/);
   assert.match(appBody, /deliveryConcurrencyValue/);
+  assert.match(appBody, /delivery\/status/);
+  assert.match(appBody, /renderDeliveryHealth/);
   assert.equal((await fetch(`${server.baseUrl}/channel-gateway/unknown`)).status, 404);
 });
 

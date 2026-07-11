@@ -143,6 +143,8 @@ export function createBridgeRuntime({
         serviceVersion,
         openclawVersion,
         configService,
+        deliveryHealth,
+        rateLimiter,
       })
     : defaultHttpHandler);
 

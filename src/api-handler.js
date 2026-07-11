@@ -123,6 +123,43 @@ function derivedLinkStatus(links, store) {
   });
 }
 
+function deliveryStatus(deliveryHealth, rateLimiter) {
+  const health = deliveryHealth?.snapshot?.() ?? {};
+  const limits = rateLimiter?.snapshot?.();
+  return {
+    channels: (Array.isArray(health.channels) ? health.channels : []).map((channel) => ({
+      channel: channel.channel,
+      status: channel.status,
+      accounts: channel.accounts,
+      pending: channel.pending,
+      sending: channel.sending,
+      failed: channel.failed,
+    })),
+    accounts: (Array.isArray(health.accounts) ? health.accounts : []).map((account) => ({
+      channel: account.channel,
+      accountId: account.accountId,
+      status: account.status,
+      errorCode: account.errorCode,
+      firstFailureAtMs: account.firstFailureAtMs,
+      lastFailureAtMs: account.lastFailureAtMs,
+      lastSuccessAtMs: account.lastSuccessAtMs,
+      nextRetryAtMs: account.nextRetryAtMs,
+      pending: account.pending,
+      sending: account.sending,
+      failed: account.failed,
+    })),
+    rateLimits: (Array.isArray(limits) ? limits : []).map((limit) => ({
+      channel: limit.channel,
+      accountId: limit.accountId,
+      tokens: limit.tokens,
+      ratePerSecond: limit.ratePerSecond,
+      burst: limit.burst,
+      blockedUntilMs: limit.blockedUntilMs,
+      available: limit.available,
+    })),
+  };
+}
+
 function routeMethod(response, actual, expected) {
   if (actual === expected) {
     return true;
@@ -142,6 +179,8 @@ export function createApiHandler({
   serviceVersion = "0.1.0",
   openclawVersion = "unknown",
   configService,
+  deliveryHealth,
+  rateLimiter,
 }) {
   const stream = sseHub;
   if (!store || typeof store.listPending !== "function" || typeof store.ack !== "function") {
@@ -189,6 +228,12 @@ export function createApiHandler({
         if (!routeMethod(response, request.method, "GET")) return;
         const probe = probeValue(url.searchParams.get("probe"));
         success(response, await rpc.status(probe === undefined ? {} : { probe }));
+        return;
+      }
+
+      if (pathname === "/api/v1/delivery/status") {
+        if (!routeMethod(response, request.method, "GET")) return;
+        success(response, deliveryStatus(deliveryHealth, rateLimiter));
         return;
       }
 

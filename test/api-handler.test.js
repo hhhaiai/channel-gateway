@@ -74,6 +74,74 @@ function fixture(options = {}) {
   return { calls, store, health, handler };
 }
 
+test("returns sanitized account health, backlog, and rate-limit status", async (t) => {
+  const state = fixture({
+    deliveryHealth: {
+      snapshot: () => ({
+        channels: [{ channel: "telegram", status: "degraded", accounts: 1, pending: 3, sending: 1, failed: 0, token: "secret" }],
+        accounts: [{
+          channel: "telegram",
+          accountId: "bot-a",
+          status: "degraded",
+          errorCode: "RATE_LIMITED",
+          firstFailureAtMs: 1_000,
+          lastFailureAtMs: 2_000,
+          lastSuccessAtMs: null,
+          nextRetryAtMs: 5_000,
+          pending: 3,
+          sending: 1,
+          failed: 0,
+          providerMessage: "secret body",
+        }],
+      }),
+    },
+    rateLimiter: {
+      snapshot: () => [{
+        channel: "telegram",
+        accountId: "bot-a",
+        tokens: 0.5,
+        ratePerSecond: 5,
+        burst: 10,
+        blockedUntilMs: 4_000,
+        available: false,
+        credential: "secret credential",
+      }],
+    },
+  });
+  t.after(() => state.store.close());
+  const server = await listen(state.handler);
+  t.after(server.close);
+
+  const response = await json(await fetch(`${server.baseUrl}/api/v1/delivery/status`));
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.deepEqual(response.body.result, {
+    channels: [{ channel: "telegram", status: "degraded", accounts: 1, pending: 3, sending: 1, failed: 0 }],
+    accounts: [{
+      channel: "telegram",
+      accountId: "bot-a",
+      status: "degraded",
+      errorCode: "RATE_LIMITED",
+      firstFailureAtMs: 1_000,
+      lastFailureAtMs: 2_000,
+      lastSuccessAtMs: null,
+      nextRetryAtMs: 5_000,
+      pending: 3,
+      sending: 1,
+      failed: 0,
+    }],
+    rateLimits: [{
+      channel: "telegram",
+      accountId: "bot-a",
+      tokens: 0.5,
+      ratePerSecond: 5,
+      burst: 10,
+      blockedUntilMs: 4_000,
+      available: false,
+    }],
+  });
+});
+
 test("requires canonical API dependency names", (t) => {
   const state = fixture();
   t.after(() => state.store.close());

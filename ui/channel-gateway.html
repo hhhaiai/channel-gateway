@@ -40,6 +40,19 @@
       </label>
       <p class="muted">保存后需要重启服务；所有配置都受服务端硬上限约束。</p>
     </section>
+    <section class="card" id="delivery-health">
+      <h2>投递健康</h2>
+      <p class="muted">按渠道和发送账号展示最近投递状态、积压、下一次重试及限流 Cooldown。这里只显示受控错误码，不显示消息内容或凭证。</p>
+      <div id="delivery-channels" class="health-cards"><span class="muted">连接后加载。</span></div>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr><th>渠道 / 账号</th><th>状态</th><th>错误码</th><th>积压</th><th>下一次重试</th><th>速率 / Token</th><th>Cooldown</th></tr>
+          </thead>
+          <tbody id="delivery-accounts"><tr><td colspan="7" class="muted">连接后加载。</td></tr></tbody>
+        </table>
+      </div>
+    </section>
     <section class="card">
       <h2>互通房间</h2>
       <p>每个房间至少两个 endpoint。添加 endpoint 后填写该平台的 <code>conversationId</code> 与 <code>to</code>；格式以该 Channel 的官方文档为准。保存后必须重启服务生效。</p>
