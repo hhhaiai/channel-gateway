@@ -33,3 +33,17 @@ test("serves a dependency-free console with strict static headers", async (t) =>
   assert.match(await app.text(), /links\/config/);
   assert.equal((await fetch(`${server.baseUrl}/channel-gateway/unknown`)).status, 404);
 });
+
+test("ships a per-channel integration console rather than a static channel list", async (t) => {
+  const server = await listen(createConsoleAssetsHandler());
+  t.after(server.close);
+
+  const page = await (await fetch(`${server.baseUrl}/channel-gateway`)).text();
+  const app = await (await fetch(`${server.baseUrl}/channel-gateway/app.js`)).text();
+  assert.match(page, /id="channel-cards"/);
+  assert.match(app, /const CHANNELS =/);
+  assert.match(app, /channels\/telegram/);
+  assert.match(app, /channels\/wechat/);
+  assert.match(app, /channels\/\$\{channel\.id\}\/\$\{action\}/);
+  assert.match(app, /添加到互通房间/);
+});
