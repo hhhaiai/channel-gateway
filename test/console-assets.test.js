@@ -24,13 +24,14 @@ test("serves a dependency-free console with strict static headers", async (t) =>
   const pageBody = await page.text();
   assert.match(pageBody, /互通房间/);
   assert.match(pageBody, /所有 OpenClaw Channel/);
-  assert.match(pageBody, /channels\/whatsapp/);
-  assert.match(pageBody, /channels\/wechat/);
 
   const app = await fetch(`${server.baseUrl}/channel-gateway/app.js`);
   assert.equal(app.status, 200);
   assert.match(app.headers.get("content-type"), /text\/javascript/);
-  assert.match(await app.text(), /links\/config/);
+  const appBody = await app.text();
+  assert.match(appBody, /links\/config/);
+  assert.match(appBody, /\["whatsapp", "WhatsApp"/);
+  assert.match(appBody, /\["wechat", "WeChat"/);
   assert.equal((await fetch(`${server.baseUrl}/channel-gateway/unknown`)).status, 404);
 });
 
@@ -42,8 +43,8 @@ test("ships a per-channel integration console rather than a static channel list"
   const app = await (await fetch(`${server.baseUrl}/channel-gateway/app.js`)).text();
   assert.match(page, /id="channel-cards"/);
   assert.match(app, /const CHANNELS =/);
-  assert.match(app, /channels\/telegram/);
-  assert.match(app, /channels\/wechat/);
+  assert.match(app, /\["telegram", "Telegram"/);
+  assert.match(app, /\["wechat", "WeChat"/);
   assert.match(app, /channels\/\$\{channel\.id\}\/\$\{action\}/);
   assert.match(app, /添加到互通房间/);
 });
