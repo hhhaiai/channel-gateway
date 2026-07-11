@@ -74,6 +74,44 @@ function fixture(options = {}) {
   return { calls, store, health, handler };
 }
 
+test("requires canonical API dependency names", (t) => {
+  const state = fixture();
+  t.after(() => state.store.close());
+
+  for (const alias of ["rpcInput", "gatewayRpc"]) {
+    assert.throws(
+      () => createApiHandler({
+        store: state.store,
+        health: state.health,
+        [alias]: { send() {} },
+      }),
+      /rpc must implement the Gateway facade/,
+    );
+  }
+});
+
+test("does not use the legacy event stream alias", async (t) => {
+  const store = new EventStore(":memory:");
+  const health = new HealthState({ now: () => 1_234 });
+  const handler = createApiHandler({
+    store,
+    health,
+    rpc: { send() {} },
+    eventStream: {
+      handle(_request, response) {
+        response.end("legacy stream");
+      },
+    },
+  });
+  t.after(() => store.close());
+  const server = await listen(handler);
+  t.after(server.close);
+
+  const response = await json(await fetch(`${server.baseUrl}/api/v1/events/stream`));
+  assert.equal(response.status, 503);
+  assert.equal(response.body.error.code, "EVENT_STREAM_UNAVAILABLE");
+});
+
 async function json(response) {
   return { status: response.status, headers: response.headers, body: await response.json() };
 }

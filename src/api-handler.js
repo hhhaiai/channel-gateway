@@ -133,18 +133,15 @@ function routeMethod(response, actual, expected) {
 export function createApiHandler({
   store,
   health,
-  rpc: rpcInput,
-  gatewayRpc,
+  rpc,
   sseHub,
-  eventStream,
   links,
   linkStatus,
   bodyLimitBytes = DEFAULT_BODY_LIMIT_BYTES,
   serviceVersion = "0.1.0",
   openclawVersion = "unknown",
 }) {
-  const rpc = rpcInput ?? gatewayRpc;
-  const stream = sseHub ?? eventStream;
+  const stream = sseHub;
   if (!store || typeof store.listPending !== "function" || typeof store.ack !== "function") {
     throw new TypeError("store must implement the event API contract");
   }

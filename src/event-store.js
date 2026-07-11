@@ -124,7 +124,6 @@ function summarizeDelivery(row) {
 
   return {
     id: row.id,
-    deliveryId: row.id,
     eventId: row.event_id,
     linkId: row.link_id,
     sourceEndpointId: row.source_endpoint_id,

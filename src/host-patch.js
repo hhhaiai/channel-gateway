@@ -445,9 +445,3 @@ export async function applyOpenClawRichHookPatch(root) {
   const verification = await verifyOpenClawRichHookPatch(root);
   return { ...verification, applied: true };
 }
-
-export const OPENCLAW_RICH_HOOK_PATCH = Object.freeze({
-  packageVersion: SUPPORTED_OPENCLAW_VERSION,
-  patchVersion: PATCH_VERSION,
-  markerFile: MARKER_FILE,
-});

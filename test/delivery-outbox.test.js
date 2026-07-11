@@ -58,6 +58,7 @@ test("commits an inbound event and fan-out jobs atomically, then records a recei
     leaseToken: "lease-1",
   });
   assert.equal(claimed.status, "sending");
+  assert.equal("deliveryId" in claimed, false);
   assert.equal(claimed.attempts, 1);
   assert.equal(claimed.leaseToken, "lease-1");
 

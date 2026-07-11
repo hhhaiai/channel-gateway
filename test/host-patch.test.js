@@ -4,10 +4,12 @@ import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import {
+import * as hostPatch from "../src/host-patch.js";
+
+const {
   applyOpenClawRichHookPatch,
   verifyOpenClawRichHookPatch,
-} from "../src/host-patch.js";
+} = hostPatch;
 
 const RUNTIME_DECLARATION = `\tconst hookContext = deriveInboundMessageHookContext(ctx, { messageId: messageIdForHook });
 \tconst { isGroup, groupId } = hookContext;
@@ -70,6 +72,10 @@ type PluginHookBeforeDispatchContext = {
   replyToSender?: string;
   replyToIsQuote?: boolean;
 };`;
+
+test("exposes only the Host patch operations", () => {
+  assert.equal("OPENCLAW_RICH_HOOK_PATCH" in hostPatch, false);
+});
 
 async function createFixture({
   version = "2026.6.11",
