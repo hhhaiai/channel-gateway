@@ -38,6 +38,7 @@ test("serves a dependency-free console with strict static headers", async (t) =>
   assert.match(appBody, /\["whatsapp", "WhatsApp"/);
   assert.match(appBody, /\["wechat", "WeChat"/);
   assert.match(appBody, /effectiveDeliveryMaxConcurrency/);
+  assert.match(appBody, /deliveryMaxConcurrencyAutoMax/);
   assert.match(appBody, /deliveryMaxConcurrency:/);
   assert.match(appBody, /deliveryConcurrencyValue/);
   assert.match(appBody, /delivery\/status/);

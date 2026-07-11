@@ -40,8 +40,8 @@ Verify representative values:
 1 CPU / 256 MiB  → 1
 1 CPU / 512 MiB  → 2
 2 CPU / 4 GiB    → 4
-8 CPU / 8 GiB    → 16
-32 CPU / 128 GiB → 32
+8 CPU / 8 GiB    → 8
+32 CPU / 128 GiB → 8
 ```
 
 - [ ] **Step 3: Write failing precedence and parsing tests**

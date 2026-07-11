@@ -2,7 +2,7 @@ import { availableParallelism, totalmem } from "node:os";
 
 const MIB = 1024 * 1024;
 const MEMORY_BYTES_PER_AUTO_LANE = 256 * MIB;
-const AUTO_DELIVERY_CONCURRENCY_MAX = 32;
+export const DELIVERY_CONCURRENCY_AUTO_MAX = 8;
 
 export const DELIVERY_CONCURRENCY_HARD_MAX = 256;
 
@@ -62,7 +62,7 @@ export function deriveDeliveryMaxConcurrency({ cpuCount, memoryLimitBytes }) {
     Math.min(
       cpuBound,
       memoryBound,
-      AUTO_DELIVERY_CONCURRENCY_MAX,
+      DELIVERY_CONCURRENCY_AUTO_MAX,
       DELIVERY_CONCURRENCY_HARD_MAX,
     ),
   );

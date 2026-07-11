@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import {
+  DELIVERY_CONCURRENCY_AUTO_MAX,
   DELIVERY_CONCURRENCY_HARD_MAX,
   resolveDeliveryMaxConcurrency,
 } from "./resource-limits.js";
@@ -87,6 +88,7 @@ export function createLinksConfigService({ runtime, env = process.env, resources
       effectiveDeliveryMaxConcurrency: resolved.value,
       deliveryMaxConcurrencySource: resolved.source,
       deliveryMaxConcurrencyHardMax: DELIVERY_CONCURRENCY_HARD_MAX,
+      deliveryMaxConcurrencyAutoMax: DELIVERY_CONCURRENCY_AUTO_MAX,
       resources: { ...resolved.resources },
       revision: revision(configuration),
       restartRequired: true,

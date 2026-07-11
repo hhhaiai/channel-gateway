@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   DELIVERY_CONCURRENCY_HARD_MAX,
+  DELIVERY_CONCURRENCY_AUTO_MAX,
   deriveDeliveryMaxConcurrency,
   detectRuntimeResources,
   resolveDeliveryMaxConcurrency,
@@ -50,8 +51,8 @@ test("derives conservative delivery concurrency from CPU and memory", () => {
     [1, 256 * MIB, 1],
     [1, 512 * MIB, 2],
     [2, 4 * GIB, 4],
-    [8, 8 * GIB, 16],
-    [32, 128 * GIB, 32],
+    [8, 8 * GIB, 8],
+    [32, 128 * GIB, 8],
   ]) {
     assert.equal(
       deriveDeliveryMaxConcurrency({ cpuCount, memoryLimitBytes }),
@@ -59,6 +60,7 @@ test("derives conservative delivery concurrency from CPU and memory", () => {
     );
   }
   assert.equal(DELIVERY_CONCURRENCY_HARD_MAX, 256);
+  assert.equal(DELIVERY_CONCURRENCY_AUTO_MAX, 8);
 });
 
 test("resolves plugin config before environment and detected defaults", () => {

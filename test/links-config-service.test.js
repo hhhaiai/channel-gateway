@@ -66,6 +66,7 @@ test("returns a full editable link configuration with a stable revision", () => 
   assert.equal(result.effectiveDeliveryMaxConcurrency, 4);
   assert.equal(result.deliveryMaxConcurrencySource, "detected");
   assert.equal(result.deliveryMaxConcurrencyHardMax, 256);
+  assert.equal(result.deliveryMaxConcurrencyAutoMax, 8);
   assert.deepEqual(result.resources, {
     cpuCount: 2,
     memoryLimitBytes: 4 * 1024 ** 3,

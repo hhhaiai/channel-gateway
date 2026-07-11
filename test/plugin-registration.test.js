@@ -186,7 +186,7 @@ test("derives delivery concurrency from runtime-visible resources", () => {
 
   plugin.register(createApi({ pluginConfig: { links: [] } }).api);
 
-  assert.equal(receivedOptions.deliveryMaxConcurrency, 16);
+  assert.equal(receivedOptions.deliveryMaxConcurrency, 8);
 });
 
 test("lets the environment override detected delivery concurrency", () => {

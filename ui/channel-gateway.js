@@ -232,6 +232,7 @@ function renderResourceSettings(configuration) {
   $("#resource-summary").textContent = [
     `当前有效并发 ${configuration.effectiveDeliveryMaxConcurrency}`,
     `来源 ${source}`,
+    `SQLite 自动上限 ${configuration.deliveryMaxConcurrencyAutoMax}`,
     `CPU ${configuration.resources.cpuCount}`,
     `内存上限 ${formatBytes(configuration.resources.memoryLimitBytes)}`,
     `内存来源 ${configuration.resources.memorySource}`,
