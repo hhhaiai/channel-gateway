@@ -52,6 +52,79 @@ manager 注入，不能把 token 写入镜像、Compose 文件或日志。修改
 launcher 会校验 Bridge、数据库、workspace、Channel load path、Control UI/reload 和端口隔离约束，
 不会静默覆盖已有配置。
 
+## 首次从零配置（推荐顺序）
+
+以下顺序把已有章节串成一次可执行的首次部署；示例使用本地 `base` profile。需要 Discord、Feishu、
+Slack 或 WhatsApp 时，把第 1 步改为 `common`。所有真实平台接入都需要该平台的真实凭据、网络权限和
+平台侧配置；测试 fixture 不能替代 live provider 验收。**凭据、二维码 session、token 和数据目录不得
+提交到 Git，也不得烘焙进镜像。**
+
+1. 选择并安装 profile，验证固定 Host patch：
+
+   ```bash
+   # 二选一：只需 core/Telegram 用 base；需官方常用插件用 common
+   npm ci --omit=dev --omit=optional       # base
+   # npm ci --omit=dev --include=optional  # common
+   npm run verify:openclaw-patch
+   ```
+
+2. 在仓库外或已忽略的位置创建本实例专用数据目录和 operator token；每个不可信租户必须使用不同目录与
+   token：
+
+   ```bash
+   export CHANNEL_GATEWAY_DATA_DIR="$PWD/.channel-gateway"
+   export CHANNEL_GATEWAY_TOKEN="$(openssl rand -hex 32)"
+   export CHANNEL_GATEWAY_BIND=loopback
+   ```
+
+3. 先只启动一次，让 launcher 创建隔离配置和 SQLite；确认 ready 后立即停止，之后再做 provider
+   onboarding。另开终端运行 `curl http://127.0.0.1:18789/healthz`，返回成功后回到启动终端按
+   `Ctrl-C`（SIGINT）停止：
+
+   ```bash
+   npm start
+   ```
+
+4. 服务停止时，导出同一实例的 OpenClaw 环境变量，再按所选平台执行原生 onboarding。`channels add`
+   是交互式入口；Feishu/WhatsApp 分别使用下面的 login 命令，其他平台的凭据和事件订阅要求见
+   [Channel onboarding 边界](#channel-onboarding-边界)：
+
+   ```bash
+   export OPENCLAW_HOME="$CHANNEL_GATEWAY_DATA_DIR"
+   export OPENCLAW_CONFIG_PATH="$CHANNEL_GATEWAY_DATA_DIR/config/openclaw.json"
+   export OPENCLAW_STATE_DIR="$CHANNEL_GATEWAY_DATA_DIR/state"
+   export OPENCLAW_WORKSPACE_DIR="$CHANNEL_GATEWAY_DATA_DIR/workspace"
+   export OPENCLAW_OAUTH_DIR="$CHANNEL_GATEWAY_DATA_DIR/credentials"
+   export OPENCLAW_GATEWAY_TOKEN="$CHANNEL_GATEWAY_TOKEN"
+
+   ./node_modules/.bin/openclaw channels add
+   # 按需执行：
+   # ./node_modules/.bin/openclaw channels login --channel feishu
+   # ./node_modules/.bin/openclaw channels login --channel whatsapp
+   ./node_modules/.bin/openclaw channels status --probe
+   ```
+
+5. 从真实 `channels status` 或已收到的事件记录每个 `conversationId`。在
+   `config/openclaw.json` 中先为这些精确 id 配置 Channel group allowlist/`groupPolicy` 和
+   `groups.<conversationId>.requireMention=false`；Telegram 还要在 BotFather 执行 `/setprivacy` →
+   **Disable**。不要先开放所有群，具体意图见[群消息接入策略](#群消息接入策略)。
+
+6. 将[完整 links 示例](#完整-links-示例)中的示例 `conversationId` 和 `to` 全部替换为第 5 步确认的
+   实际 id（两者分别核验），只保留要互通的 endpoint；然后重启 `npm start`。
+
+7. 用同一个 token 验收控制面和一条受控发送：先按[REST 与 SSE API](#rest-与-sse-api)定义 `BASE`/
+   `cgcurl`，依次请求 `/healthz`、`/api/v1/health`、`/api/v1/channels?probe=true`、
+   `/api/v1/links`、`/api/v1/events?limit=100`，再对一个已批准目标 `POST /api/v1/messages`。随后从每个
+   已 link 的群发一条受控消息，确认目标端 fan-out、`events` 和 delivery receipt；重启一次后再确认
+   pending delivery 会恢复，而不是把 fixture 结果当作上线证明。
+
+失败时按这个顺序排查：`npm run verify:openclaw-patch`（Host/patch）、
+`$CHANNEL_GATEWAY_DATA_DIR/config/openclaw.json`（profile、插件路径、group/links）、
+`$CHANNEL_GATEWAY_DATA_DIR/credentials/`（平台登录材料权限，不要打印内容）、
+`$CHANNEL_GATEWAY_DATA_DIR/state/channel-gateway.sqlite`（磁盘/目录权限）和
+`./node_modules/.bin/openclaw channels status --probe`（平台连通性）。若 `/api/v1/health` 为 503，按
+`/api/v1/health` 的错误修复磁盘或权限并重启；不要绕过 SQLite durable store。
+
 ## Docker / Compose
 
 ```bash
