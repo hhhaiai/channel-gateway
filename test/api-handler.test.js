@@ -392,3 +392,83 @@ test("maps controlled Gateway errors without exposing details", async () => {
     assert.equal(JSON.stringify(response.body).includes("stack line"), false);
   }
 });
+
+test("reads and saves full link configuration without weakening the sanitized status route", async (t) => {
+  const state = fixture({
+    bodyLimitBytes: 1024,
+    configService: {
+      read() {
+        return {
+          links: [{
+            id: "room",
+            endpoints: [
+              { id: "qq", channel: "qqbot", accountId: "default", conversationId: "qq-1", to: "qq-1", receive: true, send: true, threadId: null },
+              { id: "tg", channel: "telegram", accountId: "default", conversationId: "tg-1", to: "-1001", receive: true, send: true, threadId: null },
+            ],
+          }],
+          revision: "a".repeat(64),
+          restartRequired: true,
+        };
+      },
+      async update(body) {
+        assert.equal(body.revision, "a".repeat(64));
+        assert.equal(body.links[0].endpoints[1].to, "-1001");
+        return { ...this.read(), links: body.links };
+      },
+    },
+  });
+  t.after(() => state.store.close());
+  const server = await listen(state.handler);
+  t.after(server.close);
+
+  let response = await json(await fetch(`${server.baseUrl}/api/v1/links/config`));
+  assert.equal(response.status, 200);
+  assert.equal(response.body.result.links[0].endpoints[1].to, "-1001");
+  assert.equal(response.body.result.restartRequired, true);
+
+  response = await json(await fetch(`${server.baseUrl}/api/v1/links/config`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      links: response.body.result.links,
+      revision: response.body.result.revision,
+    }),
+  }));
+  assert.equal(response.status, 200);
+  assert.equal(response.body.result.revision, "a".repeat(64));
+
+  const status = await json(await fetch(`${server.baseUrl}/api/v1/links`));
+  assert.equal(JSON.stringify(status.body).includes("-1001"), false);
+});
+
+test("rejects unavailable, malformed, and stale link configuration writes", async (t) => {
+  const state = fixture({
+    configService: {
+      read() { return { links: [], revision: "a".repeat(64), restartRequired: true }; },
+      async update() {
+        const error = new Error("stale");
+        error.code = "CONFIG_CONFLICT";
+        throw error;
+      },
+    },
+  });
+  t.after(() => state.store.close());
+  const server = await listen(state.handler);
+  t.after(server.close);
+
+  let response = await json(await fetch(`${server.baseUrl}/api/v1/links/config`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ links: [], revision: "a".repeat(64), extra: true }),
+  }));
+  assert.equal(response.status, 400);
+  assert.equal(response.body.error.code, "INVALID_REQUEST");
+
+  response = await json(await fetch(`${server.baseUrl}/api/v1/links/config`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ links: [], revision: "a".repeat(64) }),
+  }));
+  assert.equal(response.status, 409);
+  assert.equal(response.body.error.code, "CONFIG_CONFLICT");
+});

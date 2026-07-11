@@ -140,6 +140,7 @@ export function createApiHandler({
   bodyLimitBytes = DEFAULT_BODY_LIMIT_BYTES,
   serviceVersion = "0.1.0",
   openclawVersion = "unknown",
+  configService,
 }) {
   const stream = sseHub;
   if (!store || typeof store.listPending !== "function" || typeof store.ack !== "function") {
@@ -193,6 +194,25 @@ export function createApiHandler({
       if (pathname === "/api/v1/links") {
         if (!routeMethod(response, request.method, "GET")) return;
         success(response, sanitizeLinks(await getLinkStatus()));
+        return;
+      }
+
+      if (pathname === "/api/v1/links/config") {
+        if (!configService || typeof configService.read !== "function" ||
+          typeof configService.update !== "function") {
+          failure(response, 503, "LINK_CONFIG_UNAVAILABLE", { retryable: true });
+          return;
+        }
+        if (request.method === "GET") {
+          success(response, configService.read());
+          return;
+        }
+        if (!routeMethod(response, request.method, "PUT")) return;
+        const body = await readJsonBody(request, { limitBytes: bodyLimitBytes });
+        if (Object.keys(body).length !== 2 || !("links" in body) || !("revision" in body)) {
+          throw new TypeError("link config body only accepts links and revision");
+        }
+        success(response, await configService.update(body));
         return;
       }
 
@@ -271,6 +291,10 @@ export function createApiHandler({
       }
       if (error?.code === "UNKNOWN_CURSOR") {
         failure(response, 400, "UNKNOWN_CURSOR");
+        return;
+      }
+      if (error?.code === "CONFIG_CONFLICT") {
+        failure(response, 409, "CONFIG_CONFLICT");
         return;
       }
       if (error instanceof TypeError || error instanceof RangeError) {
