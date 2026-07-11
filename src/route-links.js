@@ -32,6 +32,10 @@ function endpointMatchKey({ channel, accountId, conversationId }) {
   return JSON.stringify([channel, accountId, conversationId]);
 }
 
+function conversationOwnerKey({ channel, conversationId }) {
+  return JSON.stringify([channel, conversationId]);
+}
+
 function outboundTargetKey({ channel, accountId, to }) {
   return JSON.stringify([channel, accountId, to]);
 }
@@ -86,6 +90,7 @@ export function compileLinks(input) {
 
   const linkIds = new Set();
   const sourceIndex = new Map();
+  const conversationOwners = new Map();
   const outboundIndex = new Set();
   const links = input.map((link) => {
     if (!link || typeof link !== "object" || Array.isArray(link)) {
@@ -114,7 +119,15 @@ export function compileLinks(input) {
       if (sourceIndex.has(matchKey)) {
         throw new TypeError(`duplicate endpoint match: ${normalized.channel}/${normalized.accountId}/${normalized.conversationId}`);
       }
+      const ownerKey = conversationOwnerKey(normalized);
+      const existingOwner = conversationOwners.get(ownerKey);
+      if (existingOwner && existingOwner !== normalized.accountId) {
+        throw new TypeError(
+          `conversation already owned by another bot account: ${normalized.channel}/${normalized.conversationId}`,
+        );
+      }
       sourceIndex.set(matchKey, { linkId: id, endpointId: normalized.id });
+      conversationOwners.set(ownerKey, normalized.accountId);
 
       const outboundKey = outboundTargetKey(normalized);
       if (outboundIndex.has(outboundKey)) {

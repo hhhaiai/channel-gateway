@@ -306,6 +306,13 @@ test("rejects ambiguous or incomplete link definitions", () => {
     },
     {
       input: [
+        { id: "first", endpoints: [validEndpoint, { id: "two", channel: "feishu", conversationId: "two", to: "two" }] },
+        { id: "second", endpoints: [{ ...validEndpoint, id: "three", accountId: "second-bot" }, { id: "four", channel: "qqbot", conversationId: "four", to: "four" }] },
+      ],
+      message: /conversation already owned by another bot account/,
+    },
+    {
+      input: [
         {
           id: "duplicate-outbound",
           endpoints: [
