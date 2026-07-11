@@ -5,6 +5,11 @@ import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { mergeNonEmpty } from "./event-normalizer.js";
+import {
+  aggregateDeliveryRequests,
+  isAggregationCompatible,
+  validateDeliveryAggregation,
+} from "./delivery-aggregation.js";
 
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 500;
@@ -190,6 +195,14 @@ function summarizeDelivery(row) {
   };
 }
 
+function summarizeAggregate(row, members, request) {
+  return {
+    ...summarizeDelivery(row),
+    request,
+    aggregateMemberIds: members.map((member) => member.id),
+  };
+}
+
 function unknownCursor(after) {
   const error = new RangeError(`unknown cursor: ${after}`);
   error.code = "UNKNOWN_CURSOR";
@@ -265,6 +278,8 @@ export class EventStore extends EventEmitter {
         lease_until_ms INTEGER,
         receipt_message_id TEXT,
         error_code TEXT,
+        aggregate_id TEXT,
+        aggregate_index INTEGER,
         created_at_ms INTEGER NOT NULL,
         updated_at_ms INTEGER NOT NULL,
         UNIQUE(event_id, link_id, destination_endpoint_id)
@@ -280,6 +295,18 @@ export class EventStore extends EventEmitter {
           receipt_message_id
         ) WHERE receipt_message_id IS NOT NULL;
     `);
+    const deliveryColumns = new Set(
+      this.database.prepare("PRAGMA table_info(deliveries)").all().map((column) => column.name),
+    );
+    if (!deliveryColumns.has("aggregate_id")) {
+      this.database.exec("ALTER TABLE deliveries ADD COLUMN aggregate_id TEXT");
+    }
+    if (!deliveryColumns.has("aggregate_index")) {
+      this.database.exec("ALTER TABLE deliveries ADD COLUMN aggregate_index INTEGER");
+    }
+    this.database.exec(
+      "CREATE INDEX IF NOT EXISTS deliveries_aggregate ON deliveries(aggregate_id, aggregate_index)",
+    );
   }
 
   enqueue(event, { deliveries = [] } = {}) {
@@ -433,12 +460,14 @@ export class EventStore extends EventEmitter {
     leaseToken = randomUUID(),
     excludedDestinations = [],
     excludedAccounts = [],
+    aggregation,
   } = {}) {
     finiteInteger("nowMs", nowMs);
     positiveInteger("leaseMs", leaseMs);
     nonEmptyString("leaseToken", leaseToken);
     const excluded = requireExcludedDestinations(excludedDestinations);
     const accounts = requireExcludedAccounts(excludedAccounts);
+    const aggregationPolicy = validateDeliveryAggregation(aggregation);
     const exclusionSql = excluded.map(
       () => `AND NOT (
              destination_channel = ?
@@ -485,18 +514,91 @@ export class EventStore extends EventEmitter {
         return;
       }
 
-      const updated = this.database
-        .prepare(
-          `UPDATE deliveries
-           SET status = 'sending', attempts = attempts + 1,
-               lease_token = ?, lease_until_ms = ?, updated_at_ms = ?
-           WHERE id = ?
-             AND ((status = 'pending' AND next_attempt_at_ms <= ?)
-               OR (status = 'sending' AND lease_until_ms IS NOT NULL AND lease_until_ms <= ?))`,
-        )
-        .run(leaseToken, nowMs + leaseMs, nowMs, row.id, nowMs, nowMs);
-      if (updated.changes === 1) {
-        claimed = summarizeDelivery(this.#findDelivery(row.id));
+      let members = [row];
+      let aggregateRequest = JSON.parse(row.request_json);
+      const existingAggregateId = row.aggregate_id;
+      if (existingAggregateId) {
+        members = this.database.prepare(
+          `SELECT * FROM deliveries
+           WHERE aggregate_id = ?
+           ORDER BY aggregate_index, seq`,
+        ).all(existingAggregateId);
+        const built = aggregateDeliveryRequests(
+          members.map((member) => JSON.parse(member.request_json)),
+          {
+            aggregateId: existingAggregateId,
+            maxItems: Math.max(1, members.length),
+            maxBytes: 262_144,
+          },
+        );
+        aggregateRequest = built.request;
+      } else if (
+        aggregationPolicy.enabled &&
+        row.status === "pending" &&
+        row.attempts === 0 &&
+        isAggregationCompatible(aggregateRequest) &&
+        Buffer.byteLength(aggregateRequest.message) <= aggregationPolicy.maxBytes
+      ) {
+        const candidates = this.database.prepare(
+          `SELECT * FROM deliveries
+           WHERE status = 'pending' AND attempts = 0 AND next_attempt_at_ms <= ?
+             AND aggregate_id IS NULL
+             AND link_id = ? AND destination_endpoint_id = ?
+             AND destination_channel = ? AND destination_account_id = ?
+             AND destination_conversation_id = ?
+           ORDER BY seq
+           LIMIT ?`,
+        ).all(
+          nowMs,
+          row.link_id,
+          row.destination_endpoint_id,
+          row.destination_channel,
+          row.destination_account_id,
+          row.destination_conversation_id,
+          aggregationPolicy.maxItems,
+        );
+        const built = aggregateDeliveryRequests(
+          candidates.map((candidate) => JSON.parse(candidate.request_json)),
+          {
+            aggregateId: row.id,
+            maxItems: aggregationPolicy.maxItems,
+            maxBytes: aggregationPolicy.maxBytes,
+          },
+        );
+        const included = new Set(built.memberIds);
+        members = candidates.filter((candidate) => included.has(candidate.id));
+        aggregateRequest = built.request;
+      }
+
+      const aggregateId = existingAggregateId ?? row.id;
+      const ids = members.map((member) => member.id);
+      const placeholders = ids.map(() => "?").join(",");
+      const updated = this.database.prepare(
+        `UPDATE deliveries
+         SET status = 'sending', attempts = attempts + 1,
+             lease_token = ?, lease_until_ms = ?, updated_at_ms = ?,
+             aggregate_id = ?,
+             aggregate_index = CASE id ${ids.map((_, index) => `WHEN ? THEN ${index}`).join(" ")} END
+         WHERE id IN (${placeholders})
+           AND ((status = 'pending' AND next_attempt_at_ms <= ?)
+             OR (status = 'sending' AND lease_until_ms IS NOT NULL AND lease_until_ms <= ?))`,
+      ).run(
+        leaseToken,
+        nowMs + leaseMs,
+        nowMs,
+        aggregateId,
+        ...ids,
+        ...ids,
+        nowMs,
+        nowMs,
+      );
+      if (updated.changes === ids.length) {
+        const currentMembers = this.#aggregateMembers(aggregateId);
+        claimed = summarizeAggregate(
+          currentMembers[0],
+          currentMembers,
+          aggregateRequest,
+        );
       }
     });
 
@@ -508,17 +610,24 @@ export class EventStore extends EventEmitter {
     const receiptMessageId = messageId == null ? null : nonEmptyString("messageId", messageId);
     finiteInteger("completedAtMs", completedAtMs);
 
-    const updated = this.database
-      .prepare(
+    let result;
+    this.#transaction(() => {
+      const members = this.#aggregateMembersForId(id, leaseToken);
+      if (members.length === 0) return;
+      const aggregateId = members[0].aggregate_id ?? id;
+      const updated = this.database.prepare(
         `UPDATE deliveries
-         SET status = 'sent', receipt_message_id = ?, error_code = NULL,
-             lease_token = NULL, lease_until_ms = NULL, updated_at_ms = ?
-         WHERE id = ? AND status = 'sending' AND lease_token = ?`,
-      )
-      .run(receiptMessageId, completedAtMs, id, leaseToken);
-    return updated.changes === 1
-      ? summarizeDelivery(this.#findDelivery(id))
-      : undefined;
+         SET status = 'sent',
+             receipt_message_id = CASE WHEN id = ? THEN ? ELSE NULL END,
+             error_code = NULL, lease_token = NULL, lease_until_ms = NULL, updated_at_ms = ?
+         WHERE aggregate_id = ? AND status = 'sending' AND lease_token = ?`,
+      ).run(id, receiptMessageId, completedAtMs, aggregateId, leaseToken);
+      if (updated.changes === members.length) {
+        const completed = this.#aggregateMembers(aggregateId);
+        result = summarizeAggregate(completed[0], completed, JSON.parse(completed[0].request_json));
+      }
+    });
+    return result;
   }
 
   retryDelivery(
@@ -550,15 +659,20 @@ export class EventStore extends EventEmitter {
       }
 
       const status = current.attempts >= maxAttempts ? "failed" : "pending";
-      this.database
+      const aggregateId = current.aggregate_id ?? current.id;
+      const members = this.#aggregateMembers(aggregateId);
+      const updated = this.database
         .prepare(
           `UPDATE deliveries
            SET status = ?, next_attempt_at_ms = ?, error_code = ?,
                lease_token = NULL, lease_until_ms = NULL, updated_at_ms = ?
-           WHERE id = ? AND status = 'sending' AND lease_token = ?`,
+           WHERE aggregate_id = ? AND status = 'sending' AND lease_token = ?`,
         )
-        .run(status, nextAttemptAtMs, code, updatedAtMs, id, leaseToken);
-      result = summarizeDelivery(this.#findDelivery(id));
+        .run(status, nextAttemptAtMs, code, updatedAtMs, aggregateId, leaseToken);
+      if (updated.changes === members.length) {
+        const retried = this.#aggregateMembers(aggregateId);
+        result = summarizeAggregate(retried[0], retried, JSON.parse(retried[0].request_json));
+      }
     });
 
     return result;
@@ -668,6 +782,19 @@ export class EventStore extends EventEmitter {
 
   #findDelivery(id) {
     return this.database.prepare("SELECT * FROM deliveries WHERE id = ?").get(id);
+  }
+
+  #aggregateMembers(aggregateId) {
+    return this.database.prepare(
+      `SELECT * FROM deliveries WHERE aggregate_id = ? ORDER BY aggregate_index, seq`,
+    ).all(aggregateId);
+  }
+
+  #aggregateMembersForId(id, leaseToken) {
+    const row = this.database.prepare(
+      `SELECT * FROM deliveries WHERE id = ? AND status = 'sending' AND lease_token = ?`,
+    ).get(id, leaseToken);
+    return row ? this.#aggregateMembers(row.aggregate_id ?? row.id) : [];
   }
 
   #insertDelivery(delivery, timestamp) {

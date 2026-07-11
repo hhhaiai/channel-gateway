@@ -127,11 +127,21 @@ test("passes bounded delivery concurrency into the worker", async () => {
       ratePerSecond: 20,
       burst: 30,
     }],
+    deliveryAggregationEnabled: true,
+    deliveryAggregationWindowMs: 2_000,
+    deliveryAggregationMaxItems: 15,
+    deliveryAggregationMaxBytes: 16_384,
   });
 
   assert.equal(runtime.worker.maxConcurrency, 12);
   assert.equal(runtime.worker.maxConcurrencyPerAccount, 5);
   assert.equal(runtime.worker.healthProjection, runtime.deliveryHealth);
+  assert.deepEqual(runtime.worker.aggregation, {
+    enabled: true,
+    windowMs: 2_000,
+    maxItems: 15,
+    maxBytes: 16_384,
+  });
   assert.deepEqual(runtime.worker.rateLimiter.defaultPolicy, {
     ratePerSecond: 7,
     burst: 11,

@@ -110,6 +110,10 @@ test("registers typed hooks and starts the worker only after Gateway startup", (
   assert.equal(typeof receivedOptions.configService.read, "function");
   assert.equal(receivedOptions.deliveryMaxConcurrency, 4);
   assert.equal(receivedOptions.deliveryMaxConcurrencyPerAccount, 2);
+  assert.equal(receivedOptions.deliveryAggregationEnabled, false);
+  assert.equal(receivedOptions.deliveryAggregationWindowMs, 1_000);
+  assert.equal(receivedOptions.deliveryAggregationMaxItems, 20);
+  assert.equal(receivedOptions.deliveryAggregationMaxBytes, 32_768);
   assert.equal(receivedOptions.deliveryRatePerSecondPerAccount, 5);
   assert.equal(receivedOptions.deliveryRateBurstPerAccount, 10);
   assert.deepEqual(receivedOptions.deliveryAccountRateLimits, []);

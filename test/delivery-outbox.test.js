@@ -148,6 +148,81 @@ test("summarizes delivery backlog by destination account", () => {
   store.close();
 });
 
+test("durably leases and completes compatible deliveries as one aggregate", () => {
+  const store = new EventStore(":memory:", { now: () => 1_000 });
+  const firstEvent = EVENT;
+  const secondEvent = { ...EVENT, id: "evt_second", messageId: "qq-message-2", text: "second" };
+  const firstJob = { ...jobsFor(firstEvent)[0], nextAttemptAtMs: 2_000 };
+  const secondJob = { ...jobsFor(secondEvent)[0], nextAttemptAtMs: 2_000 };
+  store.enqueue(firstEvent, { deliveries: [firstJob] });
+  store.enqueue(secondEvent, { deliveries: [secondJob] });
+
+  const aggregate = store.claimNextDelivery({
+    nowMs: 2_000,
+    leaseMs: 30_000,
+    leaseToken: "aggregate-lease",
+    aggregation: { enabled: true, windowMs: 1_000, maxItems: 20, maxBytes: 32_768 },
+  });
+
+  assert.equal(aggregate.aggregateMemberIds.length, 2);
+  assert.match(aggregate.request.message, /hello\n\[qqbot\/Alice\] second/);
+  const completed = store.completeDelivery(aggregate.id, {
+    leaseToken: "aggregate-lease",
+    messageId: "provider-aggregate",
+    completedAtMs: 2_001,
+  });
+  assert.equal(completed.aggregateMemberIds.length, 2);
+  assert.deepEqual(store.deliveryCounts(), { pending: 0, sending: 0, sent: 2, failed: 0 });
+  store.close();
+});
+
+test("keeps aggregate membership stable across retry and lease reclaim", () => {
+  const store = new EventStore(":memory:", { now: () => 1_000 });
+  const secondEvent = { ...EVENT, id: "evt_retry_second", messageId: "qq-retry-2", text: "second" };
+  store.enqueue(EVENT, { deliveries: [{ ...jobsFor(EVENT)[0], nextAttemptAtMs: 2_000 }] });
+  store.enqueue(secondEvent, { deliveries: [{ ...jobsFor(secondEvent)[0], nextAttemptAtMs: 2_000 }] });
+  const first = store.claimNextDelivery({
+    nowMs: 2_000,
+    leaseMs: 100,
+    leaseToken: "lease-first",
+    aggregation: { enabled: true, windowMs: 1_000, maxItems: 20, maxBytes: 32_768 },
+  });
+  store.retryDelivery(first.id, {
+    leaseToken: "lease-first",
+    code: "TIMEOUT",
+    nextAttemptAtMs: 3_000,
+    maxAttempts: 5,
+    updatedAtMs: 2_001,
+  });
+
+  const reclaimed = store.claimNextDelivery({
+    nowMs: 3_000,
+    leaseMs: 100,
+    leaseToken: "lease-second",
+    aggregation: { enabled: false },
+  });
+  assert.deepEqual(reclaimed.aggregateMemberIds, first.aggregateMemberIds);
+  assert.equal(reclaimed.attempts, 2);
+  assert.match(reclaimed.request.message, /hello\n\[qqbot\/Alice\] second/);
+  store.close();
+});
+
+test("sends an oversized single message without trying to aggregate it", () => {
+  const store = new EventStore(":memory:", { now: () => 1_000 });
+  const largeEvent = { ...EVENT, id: "evt_large", messageId: "qq-large", text: "x".repeat(2_000) };
+  store.enqueue(largeEvent, { deliveries: [{ ...jobsFor(largeEvent)[0], nextAttemptAtMs: 2_000 }] });
+
+  const claimed = store.claimNextDelivery({
+    nowMs: 2_000,
+    leaseMs: 100,
+    leaseToken: "lease-large",
+    aggregation: { enabled: true, windowMs: 1_000, maxItems: 20, maxBytes: 1_024 },
+  });
+  assert.equal(claimed.aggregateMemberIds.length, 1);
+  assert.match(claimed.request.message, /x{100}/);
+  store.close();
+});
+
 test("does not duplicate delivery jobs when the same event is enriched", () => {
   const store = new EventStore(":memory:");
   const jobs = jobsFor();

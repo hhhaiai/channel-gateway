@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 
+import { validateDeliveryAggregation } from "./delivery-aggregation.js";
+
 const GATEWAY_FAILURE_CACHE_MS = 301_000;
 
 function positiveInteger(name, value, maximum = Number.MAX_SAFE_INTEGER) {
@@ -62,6 +64,7 @@ export class DeliveryWorker {
     maxConcurrencyPerAccount = 1,
     rateLimiter,
     healthProjection,
+    aggregation,
     now = Date.now,
     leaseTokenFactory = randomUUID,
     setTimer = setTimeout,
@@ -103,6 +106,7 @@ export class DeliveryWorker {
     this.maxConcurrencyPerAccount = maxConcurrencyPerAccount;
     this.rateLimiter = rateLimiter;
     this.healthProjection = healthProjection;
+    this.aggregation = validateDeliveryAggregation(aggregation);
     this.now = now;
     this.leaseTokenFactory = leaseTokenFactory;
     this.setTimer = setTimer;
@@ -153,6 +157,7 @@ export class DeliveryWorker {
       leaseToken,
       excludedDestinations,
       excludedAccounts,
+      aggregation: this.aggregation,
     });
   }
 

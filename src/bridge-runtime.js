@@ -3,6 +3,7 @@ import { AccountRateLimiter } from "./account-rate-limiter.js";
 import { CorrelationBuffer } from "./correlation-buffer.js";
 import { DeliveryWorker } from "./delivery-worker.js";
 import { DeliveryHealthProjection } from "./delivery-health-projection.js";
+import { isAggregationCompatible, validateDeliveryAggregation } from "./delivery-aggregation.js";
 import { EventStore } from "./event-store.js";
 import { normalizeInboundEvent } from "./event-normalizer.js";
 import { createGatewayRpc } from "./gateway-rpc.js";
@@ -68,6 +69,10 @@ export function createBridgeRuntime({
   deliveryRatePerSecondPerAccount = 5,
   deliveryRateBurstPerAccount = 10,
   deliveryAccountRateLimits = [],
+  deliveryAggregationEnabled = false,
+  deliveryAggregationWindowMs = 1_000,
+  deliveryAggregationMaxItems = 20,
+  deliveryAggregationMaxBytes = 32_768,
   bodyLimitBytes = 1_048_576,
   sseHeartbeatMs = 15_000,
   sseMaxQueue = 1_000,
@@ -111,6 +116,12 @@ export function createBridgeRuntime({
   const deliveryHealth = new DeliveryHealthProjection({
     deliveryStats: () => store.deliveryAccountStats?.() ?? [],
   });
+  const aggregation = validateDeliveryAggregation({
+    enabled: deliveryAggregationEnabled,
+    windowMs: deliveryAggregationWindowMs,
+    maxItems: deliveryAggregationMaxItems,
+    maxBytes: deliveryAggregationMaxBytes,
+  });
   const worker = sender && compiledLinks.links.length > 0
     ? new DeliveryWorker({
         store,
@@ -122,6 +133,7 @@ export function createBridgeRuntime({
         maxConcurrencyPerAccount: deliveryMaxConcurrencyPerAccount,
         rateLimiter,
         healthProjection: deliveryHealth,
+        aggregation,
         now,
       })
     : undefined;
@@ -185,11 +197,18 @@ export function createBridgeRuntime({
       }
 
       const replyTargets = store.resolveReplyTargets?.(canonical) ?? new Map();
-      const deliveries = planFanout({
+      let deliveries = planFanout({
         event: canonical,
         links: compiledLinks,
         replyTargets,
       });
+      if (aggregation.enabled) {
+        const availableAtMs = now() + aggregation.windowMs;
+        deliveries = deliveries.map((delivery) =>
+          isAggregationCompatible(delivery.request)
+            ? { ...delivery, nextAttemptAtMs: availableAtMs }
+            : delivery);
+      }
       store.enqueue(canonical, { deliveries });
       health.recover();
     } catch (error) {
