@@ -79,6 +79,24 @@ function requireExcludedDestinations(value) {
   });
 }
 
+function requireExcludedAccounts(value) {
+  if (!Array.isArray(value)) {
+    throw new TypeError("excludedAccounts must be an array");
+  }
+  if (value.length > 256) {
+    throw new RangeError("excludedAccounts must contain at most 256 entries");
+  }
+  return value.map((account, index) => {
+    if (!account || typeof account !== "object" || Array.isArray(account)) {
+      throw new TypeError(`excludedAccounts[${index}] must be an object`);
+    }
+    return {
+      channel: nonEmptyString(`excludedAccounts[${index}].channel`, account.channel),
+      accountId: nonEmptyString(`excludedAccounts[${index}].accountId`, account.accountId),
+    };
+  });
+}
+
 function requireDelivery(delivery, eventId, defaultAvailableAtMs) {
   if (!delivery || typeof delivery !== "object" || Array.isArray(delivery)) {
     throw new TypeError("delivery must be an object");
@@ -414,11 +432,16 @@ export class EventStore extends EventEmitter {
     leaseMs = 30_000,
     leaseToken = randomUUID(),
     excludedDestinations = [],
+    excludedAccounts = [],
   } = {}) {
     finiteInteger("nowMs", nowMs);
     positiveInteger("leaseMs", leaseMs);
     nonEmptyString("leaseToken", leaseToken);
     const excluded = requireExcludedDestinations(excludedDestinations);
+    const accounts = requireExcludedAccounts(excludedAccounts);
+    if (excluded.length * 3 + accounts.length * 2 > 900) {
+      throw new RangeError("combined delivery claim exclusions are too large");
+    }
     const exclusionSql = excluded.map(
       () => `AND NOT (
              destination_channel = ?
@@ -431,6 +454,16 @@ export class EventStore extends EventEmitter {
       destination.accountId,
       destination.conversationId,
     ]);
+    const accountExclusionSql = accounts.map(
+      () => `AND NOT (
+             destination_channel = ?
+             AND destination_account_id = ?
+           )`,
+    ).join("\n");
+    const accountExclusionParams = accounts.flatMap((account) => [
+      account.channel,
+      account.accountId,
+    ]);
     let claimed;
 
     this.#transaction(() => {
@@ -440,6 +473,7 @@ export class EventStore extends EventEmitter {
            WHERE ((status = 'pending' AND next_attempt_at_ms <= ?)
               OR (status = 'sending' AND lease_until_ms IS NOT NULL AND lease_until_ms <= ?))
            ${exclusionSql}
+           ${accountExclusionSql}
            ORDER BY
              CASE status
                WHEN 'pending' THEN next_attempt_at_ms
@@ -448,7 +482,7 @@ export class EventStore extends EventEmitter {
              seq
            LIMIT 1`,
         )
-        .get(nowMs, nowMs, ...exclusionParams);
+        .get(nowMs, nowMs, ...exclusionParams, ...accountExclusionParams);
       if (!row) {
         return;
       }

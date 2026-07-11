@@ -118,9 +118,11 @@ test("passes bounded delivery concurrency into the worker", async () => {
     logger: silentLogger,
     sender: async () => ({ messageId: "unused" }),
     deliveryMaxConcurrency: 12,
+    deliveryMaxConcurrencyPerAccount: 5,
   });
 
   assert.equal(runtime.worker.maxConcurrency, 12);
+  assert.equal(runtime.worker.maxConcurrencyPerAccount, 5);
   await runtime.close();
 });
 

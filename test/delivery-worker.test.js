@@ -54,13 +54,23 @@ function createQueueStore(inputJobs) {
   const completed = [];
   return {
     completed,
-    claimNextDelivery({ leaseToken, excludedDestinations = [] }) {
+    claimNextDelivery({
+      leaseToken,
+      excludedDestinations = [],
+      excludedAccounts = [],
+    }) {
       const excluded = new Set(excludedDestinations.map((destination) => JSON.stringify([
         destination.channel,
         destination.accountId,
         destination.conversationId,
       ])));
-      const index = jobs.findIndex((job) => !excluded.has(destinationKey(job)));
+      const accounts = new Set(excludedAccounts.map((account) => JSON.stringify([
+        account.channel,
+        account.accountId,
+      ])));
+      const index = jobs.findIndex((job) =>
+        !excluded.has(destinationKey(job)) &&
+        !accounts.has(JSON.stringify([job.destinationChannel, job.destinationAccountId])));
       if (index < 0) return undefined;
       const [job] = jobs.splice(index, 1);
       return { ...job, leaseToken };
@@ -75,13 +85,15 @@ function createQueueStore(inputJobs) {
   };
 }
 
-function queuedJob(id, conversationId) {
+function queuedJob(id, conversationId, accountId = "default") {
   return {
     ...JOB,
     id,
+    destinationAccountId: accountId,
     destinationConversationId: conversationId,
     request: {
       ...JOB.request,
+      accountId,
       to: conversationId,
       idempotencyKey: id,
     },
@@ -157,6 +169,7 @@ test("runs independent destinations concurrently up to the configured bound", as
   const worker = new DeliveryWorker({
     store,
     maxConcurrency: 2,
+    maxConcurrencyPerAccount: 2,
     maxBatchSize: 3,
     leaseTokenFactory: () => `lease-${started.length + 1}`,
     async sender(request) {
@@ -189,6 +202,7 @@ test("keeps the same destination serial while other destinations progress", asyn
   const worker = new DeliveryWorker({
     store,
     maxConcurrency: 3,
+    maxConcurrencyPerAccount: 3,
     maxBatchSize: 3,
     async sender(request) {
       started.push(request.idempotencyKey);
@@ -208,6 +222,51 @@ test("keeps the same destination serial while other destinations progress", asyn
   assert.deepEqual(started, ["dlv_a1", "dlv_b", "dlv_a2"]);
   assert.equal(maxActive, 2);
   assert.equal(sameDestinationOverlap, false);
+});
+
+test("limits one account without blocking independent accounts", async () => {
+  const store = createQueueStore([
+    queuedJob("dlv_a1", "chat-a1", "account-a"),
+    queuedJob("dlv_a2", "chat-a2", "account-a"),
+    queuedJob("dlv_b", "chat-b", "account-b"),
+  ]);
+  const started = [];
+  const activeByAccount = new Map();
+  let maxActive = 0;
+  let maxAccountA = 0;
+  const worker = new DeliveryWorker({
+    store,
+    maxConcurrency: 3,
+    maxConcurrencyPerAccount: 1,
+    maxBatchSize: 3,
+    async sender(request) {
+      started.push(request.idempotencyKey);
+      const accountId = request.accountId;
+      const active = (activeByAccount.get(accountId) ?? 0) + 1;
+      activeByAccount.set(accountId, active);
+      maxActive = Math.max(maxActive, [...activeByAccount.values()].reduce((sum, n) => sum + n, 0));
+      if (accountId === "account-a") maxAccountA = Math.max(maxAccountA, active);
+      await new Promise((resolve) => setImmediate(resolve));
+      activeByAccount.set(accountId, activeByAccount.get(accountId) - 1);
+      return { messageId: "sent" };
+    },
+  });
+
+  await worker.tick();
+
+  assert.deepEqual(started, ["dlv_a1", "dlv_b", "dlv_a2"]);
+  assert.equal(maxActive, 2);
+  assert.equal(maxAccountA, 1);
+});
+
+test("requires per-account concurrency between one and 64", () => {
+  for (const maxConcurrencyPerAccount of [0, 65, 1.5]) {
+    assert.throws(() => new DeliveryWorker({
+      store: createQueueStore([]),
+      sender: async () => ({ messageId: "unused" }),
+      maxConcurrencyPerAccount,
+    }), /maxConcurrencyPerAccount/);
+  }
 });
 
 test("requires a finite delivery concurrency between one and 256", () => {

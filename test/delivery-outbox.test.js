@@ -287,6 +287,50 @@ test("can skip an active destination while claiming independent work", () => {
   store.close();
 });
 
+test("can skip a saturated account while claiming another account", () => {
+  const store = new EventStore(":memory:", { now: () => 1_000 });
+  const [base] = jobsFor();
+  const makeDelivery = ({ id, accountId, conversationId }) => ({
+    ...structuredClone(base),
+    id,
+    destinationEndpointId: id,
+    destinationAccountId: accountId,
+    destinationConversationId: conversationId,
+    request: {
+      ...structuredClone(base.request),
+      accountId,
+      to: conversationId,
+      idempotencyKey: id,
+    },
+  });
+  store.enqueue(EVENT, {
+    deliveries: [
+      makeDelivery({ id: "dlv_account_a1", accountId: "account-a", conversationId: "a1" }),
+      makeDelivery({ id: "dlv_account_a2", accountId: "account-a", conversationId: "a2" }),
+      makeDelivery({ id: "dlv_account_b", accountId: "account-b", conversationId: "b" }),
+    ],
+  });
+
+  const active = store.claimNextDelivery({
+    nowMs: 1_000,
+    leaseMs: 10_000,
+    leaseToken: "lease-account-a",
+  });
+  const independent = store.claimNextDelivery({
+    nowMs: 1_000,
+    leaseMs: 10_000,
+    leaseToken: "lease-account-b",
+    excludedAccounts: [{
+      channel: active.destinationChannel,
+      accountId: active.destinationAccountId,
+    }],
+  });
+
+  assert.equal(active.id, "dlv_account_a1");
+  assert.equal(independent.id, "dlv_account_b");
+  store.close();
+});
+
 test("resolves reply ids for every linked endpoint from source and sent receipts", () => {
   const store = new EventStore(":memory:", { now: () => 1_000 });
   store.enqueue(EVENT, { deliveries: jobsFor() });

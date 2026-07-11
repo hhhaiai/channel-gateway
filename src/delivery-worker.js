@@ -27,6 +27,17 @@ function destinationKey(destination) {
   ]);
 }
 
+function accountDescriptor(delivery) {
+  return {
+    channel: delivery.destinationChannel,
+    accountId: delivery.destinationAccountId,
+  };
+}
+
+function accountKey(account) {
+  return JSON.stringify([account.channel, account.accountId]);
+}
+
 function controlledCode(value) {
   return typeof value === "string" && /^[A-Z][A-Z0-9_]{0,63}$/.test(value)
     ? value
@@ -42,6 +53,7 @@ export class DeliveryWorker {
     leaseMs = 60_000,
     maxBatchSize = 100,
     maxConcurrency = 1,
+    maxConcurrencyPerAccount = 1,
     now = Date.now,
     leaseTokenFactory = randomUUID,
     setTimer = setTimeout,
@@ -58,6 +70,7 @@ export class DeliveryWorker {
     positiveInteger("leaseMs", leaseMs);
     positiveInteger("maxBatchSize", maxBatchSize);
     positiveInteger("maxConcurrency", maxConcurrency, 256);
+    positiveInteger("maxConcurrencyPerAccount", maxConcurrencyPerAccount, 64);
 
     this.store = store;
     this.sender = sender;
@@ -66,6 +79,7 @@ export class DeliveryWorker {
     this.leaseMs = leaseMs;
     this.maxBatchSize = maxBatchSize;
     this.maxConcurrency = maxConcurrency;
+    this.maxConcurrencyPerAccount = maxConcurrencyPerAccount;
     this.now = now;
     this.leaseTokenFactory = leaseTokenFactory;
     this.setTimer = setTimer;
@@ -107,7 +121,7 @@ export class DeliveryWorker {
     await this.activeTick;
   }
 
-  #claimNext(excludedDestinations) {
+  #claimNext(excludedDestinations, excludedAccounts) {
     const nowMs = this.now();
     const leaseToken = this.leaseTokenFactory();
     return this.store.claimNextDelivery({
@@ -115,6 +129,7 @@ export class DeliveryWorker {
       leaseMs: this.leaseMs,
       leaseToken,
       excludedDestinations,
+      excludedAccounts,
     });
   }
 
@@ -147,27 +162,58 @@ export class DeliveryWorker {
 
   async #runBatch() {
     const activeDestinations = new Map();
+    const activeAccounts = new Map();
     let claimedCount = 0;
     let completed = false;
 
     const runLane = async () => {
       while (claimedCount < this.maxBatchSize) {
-        const delivery = this.#claimNext([...activeDestinations.values()]);
+        const saturatedAccounts = new Map(
+          [...activeAccounts.entries()]
+            .filter(([, state]) => state.count >= this.maxConcurrencyPerAccount)
+            .map(([key, state]) => [key, state.account]),
+        );
+        const availableDestinationExclusions = [...activeDestinations.values()].filter(
+          (destination) => !saturatedAccounts.has(accountKey(destination)),
+        );
+        const delivery = this.#claimNext(
+          availableDestinationExclusions,
+          [...saturatedAccounts.values()],
+        );
         if (!delivery) {
           return;
         }
         claimedCount += 1;
         const destination = destinationDescriptor(delivery);
         const key = destinationKey(destination);
+        const account = accountDescriptor(delivery);
+        const activeAccountKey = accountKey(account);
         if (activeDestinations.has(key)) {
           throw new Error("store claimed an excluded destination");
         }
+        const accountState = activeAccounts.get(activeAccountKey);
+        if (accountState?.count >= this.maxConcurrencyPerAccount) {
+          throw new Error("store claimed an excluded account");
+        }
         activeDestinations.set(key, destination);
+        activeAccounts.set(activeAccountKey, {
+          account,
+          count: (accountState?.count ?? 0) + 1,
+        });
         try {
           const result = await this.#runClaimed(delivery);
           completed = result || completed;
         } finally {
           activeDestinations.delete(key);
+          const currentAccount = activeAccounts.get(activeAccountKey);
+          if (currentAccount.count === 1) {
+            activeAccounts.delete(activeAccountKey);
+          } else {
+            activeAccounts.set(activeAccountKey, {
+              account: currentAccount.account,
+              count: currentAccount.count - 1,
+            });
+          }
         }
       }
     };
