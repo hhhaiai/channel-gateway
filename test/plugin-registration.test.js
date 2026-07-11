@@ -103,11 +103,34 @@ test("registers typed hooks and starts the worker only after Gateway startup", (
   assert.equal(fixture.routes[1].match, "prefix");
   assert.equal(typeof fixture.routes[1].handler, "function");
   assert.equal(typeof receivedOptions.configService.read, "function");
+  assert.equal(receivedOptions.deliveryMaxConcurrency, 4);
   assert.equal(fixture.lifecycles[0].id, "channel-gateway");
   assert.equal(runtime.started, 0);
   fixture.hooks.get("gateway_start").handler({}, {});
   assert.equal(runtime.started, 1);
   assert.equal(receivedOptions.sender instanceof Function, true);
+});
+
+test("passes an explicit delivery concurrency override to the runtime", () => {
+  let receivedOptions;
+  const plugin = createChannelGatewayPlugin({
+    dispatchGatewayMethod: async () => ({ ok: true, payload: {} }),
+    runtimeFactory(options) {
+      receivedOptions = options;
+      return fakeRuntime();
+    },
+  });
+  const fixture = createApi({
+    pluginConfig: {
+      databasePath: ":memory:",
+      links: [],
+      deliveryMaxConcurrency: 12,
+    },
+  });
+
+  plugin.register(fixture.api);
+
+  assert.equal(receivedOptions.deliveryMaxConcurrency, 12);
 });
 
 test("does not construct runtime outside full registration mode", () => {

@@ -2,10 +2,29 @@ import { randomUUID } from "node:crypto";
 
 const GATEWAY_FAILURE_CACHE_MS = 301_000;
 
-function positiveInteger(name, value) {
-  if (!Number.isSafeInteger(value) || value < 1) {
-    throw new RangeError(`${name} must be a positive integer`);
+function positiveInteger(name, value, maximum = Number.MAX_SAFE_INTEGER) {
+  if (!Number.isSafeInteger(value) || value < 1 || value > maximum) {
+    const range = maximum === Number.MAX_SAFE_INTEGER
+      ? "a positive integer"
+      : `an integer between 1 and ${maximum}`;
+    throw new RangeError(`${name} must be ${range}`);
   }
+}
+
+function destinationDescriptor(delivery) {
+  return {
+    channel: delivery.destinationChannel,
+    accountId: delivery.destinationAccountId,
+    conversationId: delivery.destinationConversationId,
+  };
+}
+
+function destinationKey(destination) {
+  return JSON.stringify([
+    destination.channel,
+    destination.accountId,
+    destination.conversationId,
+  ]);
 }
 
 function controlledCode(value) {
@@ -22,6 +41,7 @@ export class DeliveryWorker {
     maxAttempts = 5,
     leaseMs = 60_000,
     maxBatchSize = 100,
+    maxConcurrency = 1,
     now = Date.now,
     leaseTokenFactory = randomUUID,
     setTimer = setTimeout,
@@ -37,6 +57,7 @@ export class DeliveryWorker {
     positiveInteger("maxAttempts", maxAttempts);
     positiveInteger("leaseMs", leaseMs);
     positiveInteger("maxBatchSize", maxBatchSize);
+    positiveInteger("maxConcurrency", maxConcurrency, 256);
 
     this.store = store;
     this.sender = sender;
@@ -44,6 +65,7 @@ export class DeliveryWorker {
     this.maxAttempts = maxAttempts;
     this.leaseMs = leaseMs;
     this.maxBatchSize = maxBatchSize;
+    this.maxConcurrency = maxConcurrency;
     this.now = now;
     this.leaseTokenFactory = leaseTokenFactory;
     this.setTimer = setTimer;
@@ -85,18 +107,19 @@ export class DeliveryWorker {
     await this.activeTick;
   }
 
-  async #runOne() {
+  #claimNext(excludedDestinations) {
     const nowMs = this.now();
     const leaseToken = this.leaseTokenFactory();
-    const delivery = this.store.claimNextDelivery({
+    return this.store.claimNextDelivery({
       nowMs,
       leaseMs: this.leaseMs,
       leaseToken,
+      excludedDestinations,
     });
-    if (!delivery) {
-      return undefined;
-    }
+  }
 
+  async #runClaimed(delivery) {
+    const leaseToken = delivery.leaseToken;
     try {
       const result = await this.sender(delivery.request);
       return Boolean(
@@ -123,13 +146,40 @@ export class DeliveryWorker {
   }
 
   async #runBatch() {
+    const activeDestinations = new Map();
+    let claimedCount = 0;
     let completed = false;
-    for (let index = 0; index < this.maxBatchSize; index += 1) {
-      const result = await this.#runOne();
-      if (result === undefined) {
-        break;
+
+    const runLane = async () => {
+      while (claimedCount < this.maxBatchSize) {
+        const delivery = this.#claimNext([...activeDestinations.values()]);
+        if (!delivery) {
+          return;
+        }
+        claimedCount += 1;
+        const destination = destinationDescriptor(delivery);
+        const key = destinationKey(destination);
+        if (activeDestinations.has(key)) {
+          throw new Error("store claimed an excluded destination");
+        }
+        activeDestinations.set(key, destination);
+        try {
+          const result = await this.#runClaimed(delivery);
+          completed = result || completed;
+        } finally {
+          activeDestinations.delete(key);
+        }
       }
-      completed ||= result;
+    };
+
+    const lanes = Array.from(
+      { length: Math.min(this.maxConcurrency, this.maxBatchSize) },
+      () => runLane(),
+    );
+    const results = await Promise.allSettled(lanes);
+    const rejected = results.find((result) => result.status === "rejected");
+    if (rejected) {
+      throw rejected.reason;
     }
     return completed;
   }

@@ -244,6 +244,49 @@ test("claims due jobs by due time and then insertion sequence", () => {
   store.close();
 });
 
+test("can skip an active destination while claiming independent work", () => {
+  const store = new EventStore(":memory:", { now: () => 1_000 });
+  const [base] = jobsFor();
+  const makeDelivery = ({ id, endpointId, conversationId }) => ({
+    ...structuredClone(base),
+    id,
+    destinationEndpointId: endpointId,
+    destinationConversationId: conversationId,
+    request: {
+      ...structuredClone(base.request),
+      to: conversationId,
+      idempotencyKey: id,
+    },
+  });
+  store.enqueue(EVENT, {
+    deliveries: [
+      makeDelivery({ id: "dlv_active_1", endpointId: "active-1", conversationId: "shared" }),
+      makeDelivery({ id: "dlv_active_2", endpointId: "active-2", conversationId: "shared" }),
+      makeDelivery({ id: "dlv_independent", endpointId: "independent", conversationId: "other" }),
+    ],
+  });
+
+  const active = store.claimNextDelivery({
+    nowMs: 1_000,
+    leaseMs: 10_000,
+    leaseToken: "lease-active",
+  });
+  const independent = store.claimNextDelivery({
+    nowMs: 1_000,
+    leaseMs: 10_000,
+    leaseToken: "lease-independent",
+    excludedDestinations: [{
+      channel: active.destinationChannel,
+      accountId: active.destinationAccountId,
+      conversationId: active.destinationConversationId,
+    }],
+  });
+
+  assert.equal(active.id, "dlv_active_1");
+  assert.equal(independent.id, "dlv_independent");
+  store.close();
+});
+
 test("resolves reply ids for every linked endpoint from source and sent receipts", () => {
   const store = new EventStore(":memory:", { now: () => 1_000 });
   store.enqueue(EVENT, { deliveries: jobsFor() });

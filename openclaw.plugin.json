@@ -68,6 +68,12 @@
         "minimum": 1000,
         "default": 60000
       },
+      "deliveryMaxConcurrency": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 256,
+        "default": 4
+      },
       "links": {
         "type": "array",
         "default": [],

@@ -61,6 +61,7 @@ export function createBridgeRuntime({
   deliveryPollMs = 1_000,
   deliveryMaxAttempts = 5,
   deliveryLeaseMs = 60_000,
+  deliveryMaxConcurrency = 4,
   bodyLimitBytes = 1_048_576,
   sseHeartbeatMs = 15_000,
   sseMaxQueue = 1_000,
@@ -100,6 +101,7 @@ export function createBridgeRuntime({
         pollMs: deliveryPollMs,
         maxAttempts: deliveryMaxAttempts,
         leaseMs: deliveryLeaseMs,
+        maxConcurrency: deliveryMaxConcurrency,
         now,
       })
     : undefined;

@@ -51,6 +51,34 @@ function requireErrorCode(code) {
   return code;
 }
 
+function requireExcludedDestinations(value) {
+  if (!Array.isArray(value)) {
+    throw new TypeError("excludedDestinations must be an array");
+  }
+  if (value.length > 256) {
+    throw new RangeError("excludedDestinations must contain at most 256 entries");
+  }
+  return value.map((destination, index) => {
+    if (!destination || typeof destination !== "object" || Array.isArray(destination)) {
+      throw new TypeError(`excludedDestinations[${index}] must be an object`);
+    }
+    return {
+      channel: nonEmptyString(
+        `excludedDestinations[${index}].channel`,
+        destination.channel,
+      ),
+      accountId: nonEmptyString(
+        `excludedDestinations[${index}].accountId`,
+        destination.accountId,
+      ),
+      conversationId: nonEmptyString(
+        `excludedDestinations[${index}].conversationId`,
+        destination.conversationId,
+      ),
+    };
+  });
+}
+
 function requireDelivery(delivery, eventId, defaultAvailableAtMs) {
   if (!delivery || typeof delivery !== "object" || Array.isArray(delivery)) {
     throw new TypeError("delivery must be an object");
@@ -385,18 +413,33 @@ export class EventStore extends EventEmitter {
     nowMs = this.now(),
     leaseMs = 30_000,
     leaseToken = randomUUID(),
+    excludedDestinations = [],
   } = {}) {
     finiteInteger("nowMs", nowMs);
     positiveInteger("leaseMs", leaseMs);
     nonEmptyString("leaseToken", leaseToken);
+    const excluded = requireExcludedDestinations(excludedDestinations);
+    const exclusionSql = excluded.map(
+      () => `AND NOT (
+             destination_channel = ?
+             AND destination_account_id = ?
+             AND destination_conversation_id = ?
+           )`,
+    ).join("\n");
+    const exclusionParams = excluded.flatMap((destination) => [
+      destination.channel,
+      destination.accountId,
+      destination.conversationId,
+    ]);
     let claimed;
 
     this.#transaction(() => {
       const row = this.database
         .prepare(
           `SELECT * FROM deliveries
-           WHERE (status = 'pending' AND next_attempt_at_ms <= ?)
-              OR (status = 'sending' AND lease_until_ms IS NOT NULL AND lease_until_ms <= ?)
+           WHERE ((status = 'pending' AND next_attempt_at_ms <= ?)
+              OR (status = 'sending' AND lease_until_ms IS NOT NULL AND lease_until_ms <= ?))
+           ${exclusionSql}
            ORDER BY
              CASE status
                WHEN 'pending' THEN next_attempt_at_ms
@@ -405,7 +448,7 @@ export class EventStore extends EventEmitter {
              seq
            LIMIT 1`,
         )
-        .get(nowMs, nowMs);
+        .get(nowMs, nowMs, ...exclusionParams);
       if (!row) {
         return;
       }

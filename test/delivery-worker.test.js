@@ -30,6 +30,9 @@ function createStore(job) {
 const JOB = {
   id: "dlv_1",
   attempts: 1,
+  destinationChannel: "feishu",
+  destinationAccountId: "default",
+  destinationConversationId: "oc_chat",
   request: {
     channel: "feishu",
     to: "oc_chat",
@@ -37,6 +40,53 @@ const JOB = {
     idempotencyKey: "dlv_1",
   },
 };
+
+function destinationKey(delivery) {
+  return JSON.stringify([
+    delivery.destinationChannel,
+    delivery.destinationAccountId,
+    delivery.destinationConversationId,
+  ]);
+}
+
+function createQueueStore(inputJobs) {
+  const jobs = inputJobs.map((job) => structuredClone(job));
+  const completed = [];
+  return {
+    completed,
+    claimNextDelivery({ leaseToken, excludedDestinations = [] }) {
+      const excluded = new Set(excludedDestinations.map((destination) => JSON.stringify([
+        destination.channel,
+        destination.accountId,
+        destination.conversationId,
+      ])));
+      const index = jobs.findIndex((job) => !excluded.has(destinationKey(job)));
+      if (index < 0) return undefined;
+      const [job] = jobs.splice(index, 1);
+      return { ...job, leaseToken };
+    },
+    completeDelivery(id) {
+      completed.push(id);
+      return { id, status: "sent" };
+    },
+    retryDelivery() {
+      throw new Error("unexpected retry");
+    },
+  };
+}
+
+function queuedJob(id, conversationId) {
+  return {
+    ...JOB,
+    id,
+    destinationConversationId: conversationId,
+    request: {
+      ...JOB.request,
+      to: conversationId,
+      idempotencyKey: id,
+    },
+  };
+}
 
 test("claims, sends, and completes one delivery with the active lease", async () => {
   const store = createStore(JOB);
@@ -93,6 +143,81 @@ test("drains a bounded backlog sequentially in one tick", async () => {
   assert.equal(await worker.tick(), true);
   assert.deepEqual(completed, ["dlv_1", "dlv_2", "dlv_3"]);
   assert.equal(claims, 4);
+});
+
+test("runs independent destinations concurrently up to the configured bound", async () => {
+  const store = createQueueStore([
+    queuedJob("dlv_a", "chat-a"),
+    queuedJob("dlv_b", "chat-b"),
+    queuedJob("dlv_c", "chat-c"),
+  ]);
+  const started = [];
+  let active = 0;
+  let maxActive = 0;
+  const worker = new DeliveryWorker({
+    store,
+    maxConcurrency: 2,
+    maxBatchSize: 3,
+    leaseTokenFactory: () => `lease-${started.length + 1}`,
+    async sender(request) {
+      started.push(request.idempotencyKey);
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setImmediate(resolve));
+      active -= 1;
+      return { messageId: `sent-${request.idempotencyKey}` };
+    },
+  });
+
+  assert.equal(await worker.tick(), true);
+  assert.deepEqual(started, ["dlv_a", "dlv_b", "dlv_c"]);
+  assert.equal(maxActive, 2);
+  assert.deepEqual(store.completed, ["dlv_a", "dlv_b", "dlv_c"]);
+});
+
+test("keeps the same destination serial while other destinations progress", async () => {
+  const store = createQueueStore([
+    queuedJob("dlv_a1", "shared"),
+    queuedJob("dlv_a2", "shared"),
+    queuedJob("dlv_b", "other"),
+  ]);
+  const started = [];
+  const activeDestinations = new Set();
+  let sameDestinationOverlap = false;
+  let active = 0;
+  let maxActive = 0;
+  const worker = new DeliveryWorker({
+    store,
+    maxConcurrency: 3,
+    maxBatchSize: 3,
+    async sender(request) {
+      started.push(request.idempotencyKey);
+      const conversationId = request.to;
+      sameDestinationOverlap ||= activeDestinations.has(conversationId);
+      activeDestinations.add(conversationId);
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setImmediate(resolve));
+      active -= 1;
+      activeDestinations.delete(conversationId);
+      return { messageId: "sent" };
+    },
+  });
+
+  await worker.tick();
+  assert.deepEqual(started, ["dlv_a1", "dlv_b", "dlv_a2"]);
+  assert.equal(maxActive, 2);
+  assert.equal(sameDestinationOverlap, false);
+});
+
+test("requires a finite delivery concurrency between one and 256", () => {
+  for (const maxConcurrency of [0, 257, 1.5]) {
+    assert.throws(() => new DeliveryWorker({
+      store: createQueueStore([]),
+      sender: async () => ({ messageId: "unused" }),
+      maxConcurrency,
+    }), /maxConcurrency/);
+  }
 });
 
 test("treats a successful send without a receipt as sent without retrying", async () => {

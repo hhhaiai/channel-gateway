@@ -111,6 +111,19 @@ test("cannot restart the delivery worker after runtime close", async () => {
   assert.equal(runtime.worker.started, false);
 });
 
+test("passes bounded delivery concurrency into the worker", async () => {
+  const runtime = createBridgeRuntime({
+    databasePath: ":memory:",
+    links: LINKS,
+    logger: silentLogger,
+    sender: async () => ({ messageId: "unused" }),
+    deliveryMaxConcurrency: 12,
+  });
+
+  assert.equal(runtime.worker.maxConcurrency, 12);
+  await runtime.close();
+});
+
 test("runs and clears periodic terminal-state retention", async () => {
   const timers = [];
   const cleared = [];
