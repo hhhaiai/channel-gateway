@@ -200,6 +200,9 @@ function summarizeAggregate(row, members, request) {
     ...summarizeDelivery(row),
     request,
     aggregateMemberIds: members.map((member) => member.id),
+    transformedRequest: row.transform_request_json
+      ? JSON.parse(row.transform_request_json)
+      : null,
   };
 }
 
@@ -280,6 +283,7 @@ export class EventStore extends EventEmitter {
         error_code TEXT,
         aggregate_id TEXT,
         aggregate_index INTEGER,
+        transform_request_json TEXT,
         created_at_ms INTEGER NOT NULL,
         updated_at_ms INTEGER NOT NULL,
         UNIQUE(event_id, link_id, destination_endpoint_id)
@@ -303,6 +307,9 @@ export class EventStore extends EventEmitter {
     }
     if (!deliveryColumns.has("aggregate_index")) {
       this.database.exec("ALTER TABLE deliveries ADD COLUMN aggregate_index INTEGER");
+    }
+    if (!deliveryColumns.has("transform_request_json")) {
+      this.database.exec("ALTER TABLE deliveries ADD COLUMN transform_request_json TEXT");
     }
     this.database.exec(
       "CREATE INDEX IF NOT EXISTS deliveries_aggregate ON deliveries(aggregate_id, aggregate_index)",
@@ -628,6 +635,31 @@ export class EventStore extends EventEmitter {
       }
     });
     return result;
+  }
+
+  saveDeliveryTransform(id, { leaseToken, request, updatedAtMs = this.now() }) {
+    nonEmptyString("id", id);
+    nonEmptyString("leaseToken", leaseToken);
+    finiteInteger("updatedAtMs", updatedAtMs);
+    if (!request || typeof request !== "object" || Array.isArray(request)) {
+      throw new TypeError("request must be an object");
+    }
+    if (nonEmptyString("request.idempotencyKey", request.idempotencyKey) !== id) {
+      throw new TypeError("request.idempotencyKey must equal aggregate id");
+    }
+    const encoded = JSON.stringify(cloneJson(request));
+    const updated = this.database.prepare(
+      `UPDATE deliveries
+       SET transform_request_json = ?, updated_at_ms = ?
+       WHERE id = ? AND aggregate_id = ? AND status = 'sending' AND lease_token = ?
+         AND transform_request_json IS NULL`,
+    ).run(encoded, updatedAtMs, id, id, leaseToken);
+    if (updated.changes === 1) return true;
+    const existing = this.database.prepare(
+      `SELECT transform_request_json FROM deliveries
+       WHERE id = ? AND aggregate_id = ? AND status = 'sending' AND lease_token = ?`,
+    ).get(id, id, leaseToken);
+    return existing?.transform_request_json === encoded;
   }
 
   retryDelivery(

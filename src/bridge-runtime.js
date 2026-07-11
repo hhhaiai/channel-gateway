@@ -4,6 +4,7 @@ import { CorrelationBuffer } from "./correlation-buffer.js";
 import { DeliveryWorker } from "./delivery-worker.js";
 import { DeliveryHealthProjection } from "./delivery-health-projection.js";
 import { isAggregationCompatible, validateDeliveryAggregation } from "./delivery-aggregation.js";
+import { DeliveryTransformBoundary } from "./delivery-transform-boundary.js";
 import { EventStore } from "./event-store.js";
 import { normalizeInboundEvent } from "./event-normalizer.js";
 import { createGatewayRpc } from "./gateway-rpc.js";
@@ -73,6 +74,9 @@ export function createBridgeRuntime({
   deliveryAggregationWindowMs = 1_000,
   deliveryAggregationMaxItems = 20,
   deliveryAggregationMaxBytes = 32_768,
+  deliveryTransformer,
+  deliveryTransformTimeoutMs = 5_000,
+  deliveryTransformMaxBytes = 32_768,
   bodyLimitBytes = 1_048_576,
   sseHeartbeatMs = 15_000,
   sseMaxQueue = 1_000,
@@ -122,6 +126,13 @@ export function createBridgeRuntime({
     maxItems: deliveryAggregationMaxItems,
     maxBytes: deliveryAggregationMaxBytes,
   });
+  const deliveryTransform = deliveryTransformer
+    ? new DeliveryTransformBoundary({
+        transformer: deliveryTransformer,
+        timeoutMs: deliveryTransformTimeoutMs,
+        maxBytes: deliveryTransformMaxBytes,
+      })
+    : undefined;
   const worker = sender && compiledLinks.links.length > 0
     ? new DeliveryWorker({
         store,
@@ -134,6 +145,7 @@ export function createBridgeRuntime({
         rateLimiter,
         healthProjection: deliveryHealth,
         aggregation,
+        transformBoundary: deliveryTransform,
         now,
       })
     : undefined;
@@ -270,6 +282,7 @@ export function createBridgeRuntime({
     worker,
     rateLimiter,
     deliveryHealth,
+    deliveryTransform,
     handleHttp: resolvedHttpHandler,
     onMessageReceived,
     onBeforeDispatch,

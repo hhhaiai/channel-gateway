@@ -207,6 +207,40 @@ test("keeps aggregate membership stable across retry and lease reclaim", () => {
   store.close();
 });
 
+test("persists one transformed aggregate request across retry", () => {
+  const store = new EventStore(":memory:", { now: () => 1_000 });
+  const secondEvent = { ...EVENT, id: "evt_transform_second", messageId: "qq-transform-2", text: "second" };
+  store.enqueue(EVENT, { deliveries: [{ ...jobsFor(EVENT)[0], nextAttemptAtMs: 2_000 }] });
+  store.enqueue(secondEvent, { deliveries: [{ ...jobsFor(secondEvent)[0], nextAttemptAtMs: 2_000 }] });
+  const claimed = store.claimNextDelivery({
+    nowMs: 2_000,
+    leaseMs: 100,
+    leaseToken: "lease-transform",
+    aggregation: { enabled: true, windowMs: 1_000, maxItems: 20, maxBytes: 32_768 },
+  });
+  const transformed = { ...claimed.request, message: "summary⁣cg1:dlv_leader⁣" };
+  assert.equal(store.saveDeliveryTransform(claimed.id, {
+    leaseToken: "lease-transform",
+    request: transformed,
+    updatedAtMs: 2_001,
+  }), true);
+  store.retryDelivery(claimed.id, {
+    leaseToken: "lease-transform",
+    code: "TIMEOUT",
+    nextAttemptAtMs: 3_000,
+    maxAttempts: 5,
+    updatedAtMs: 2_002,
+  });
+  const reclaimed = store.claimNextDelivery({
+    nowMs: 3_000,
+    leaseMs: 100,
+    leaseToken: "lease-transform-2",
+    aggregation: { enabled: false },
+  });
+  assert.deepEqual(reclaimed.transformedRequest, transformed);
+  store.close();
+});
+
 test("sends an oversized single message without trying to aggregate it", () => {
   const store = new EventStore(":memory:", { now: () => 1_000 });
   const largeEvent = { ...EVENT, id: "evt_large", messageId: "qq-large", text: "x".repeat(2_000) };

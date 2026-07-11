@@ -65,6 +65,7 @@ export class DeliveryWorker {
     rateLimiter,
     healthProjection,
     aggregation,
+    transformBoundary,
     now = Date.now,
     leaseTokenFactory = randomUUID,
     setTimer = setTimeout,
@@ -107,6 +108,10 @@ export class DeliveryWorker {
     this.rateLimiter = rateLimiter;
     this.healthProjection = healthProjection;
     this.aggregation = validateDeliveryAggregation(aggregation);
+    if (transformBoundary !== undefined && typeof transformBoundary.transform !== "function") {
+      throw new TypeError("transformBoundary must implement transform");
+    }
+    this.transformBoundary = transformBoundary;
     this.now = now;
     this.leaseTokenFactory = leaseTokenFactory;
     this.setTimer = setTimer;
@@ -164,7 +169,22 @@ export class DeliveryWorker {
   async #runClaimed(delivery) {
     const leaseToken = delivery.leaseToken;
     try {
-      const result = await this.sender(delivery.request);
+      let request = delivery.transformedRequest ?? delivery.request;
+      if (!delivery.transformedRequest && this.transformBoundary) {
+        request = await this.transformBoundary.transform(delivery);
+        if (
+          request.message !== delivery.request.message &&
+          typeof this.store.saveDeliveryTransform === "function" &&
+          !this.store.saveDeliveryTransform(delivery.id, {
+            leaseToken,
+            request,
+            updatedAtMs: this.now(),
+          })
+        ) {
+          throw new Error("delivery transform lease was lost before send");
+        }
+      }
+      const result = await this.sender(request);
       const completedAtMs = this.now();
       const completed = this.store.completeDelivery(delivery.id, {
           leaseToken,

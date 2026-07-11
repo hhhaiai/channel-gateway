@@ -129,6 +129,26 @@ test("claims, sends, and completes one delivery with the active lease", async ()
   ]);
 });
 
+test("uses transformed aggregate requests and falls back before provider send", async () => {
+  const aggregate = {
+    ...JOB,
+    aggregateMemberIds: ["dlv_1", "dlv_2"],
+    request: { ...JOB.request, message: "one\ntwo" },
+  };
+  const sent = [];
+  const worker = new DeliveryWorker({
+    store: createStore(aggregate),
+    transformBoundary: {
+      async transform(delivery) {
+        return { ...delivery.request, message: "summary" };
+      },
+    },
+    sender: async (request) => { sent.push(request); return { messageId: "sent" }; },
+  });
+  await worker.tick();
+  assert.equal(sent[0].message, "summary");
+});
+
 test("projects only durable delivery success and failure outcomes", async () => {
   const successStore = createStore(JOB);
   const outcomes = [];

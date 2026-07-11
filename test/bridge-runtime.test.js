@@ -112,6 +112,7 @@ test("cannot restart the delivery worker after runtime close", async () => {
 });
 
 test("passes bounded delivery concurrency into the worker", async () => {
+  const transformer = async () => ({ message: "summary" });
   const runtime = createBridgeRuntime({
     databasePath: ":memory:",
     links: LINKS,
@@ -131,6 +132,9 @@ test("passes bounded delivery concurrency into the worker", async () => {
     deliveryAggregationWindowMs: 2_000,
     deliveryAggregationMaxItems: 15,
     deliveryAggregationMaxBytes: 16_384,
+    deliveryTransformer: transformer,
+    deliveryTransformTimeoutMs: 2_500,
+    deliveryTransformMaxBytes: 8_192,
   });
 
   assert.equal(runtime.worker.maxConcurrency, 12);
@@ -142,6 +146,10 @@ test("passes bounded delivery concurrency into the worker", async () => {
     maxItems: 15,
     maxBytes: 16_384,
   });
+  assert.equal(runtime.worker.transformBoundary, runtime.deliveryTransform);
+  assert.equal(runtime.deliveryTransform.transformer, transformer);
+  assert.equal(runtime.deliveryTransform.timeoutMs, 2_500);
+  assert.equal(runtime.deliveryTransform.maxBytes, 8_192);
   assert.deepEqual(runtime.worker.rateLimiter.defaultPolicy, {
     ratePerSecond: 7,
     burst: 11,
