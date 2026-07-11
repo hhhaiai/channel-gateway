@@ -1,6 +1,6 @@
 const $ = (selector) => document.querySelector(selector);
 const state = { token: "", links: [], revision: null };
-const blankEndpoint = () => ({ id: "", channel: "telegram", accountId: "default", conversationId: "", to: "", receive: true, send: true, threadId: null });
+const blankEndpoint = () => ({ id: "", channel: "telegram", accountId: "default", conversationId: "", to: "", receive: true, send: true });
 const blankRoom = () => ({ id: "", endpoints: [blankEndpoint(), blankEndpoint()] });
 
 function notice(message, error = false) { const out = $("#notice"); out.textContent = message; out.style.color = error ? "#b42318" : "#12723a"; }
@@ -11,7 +11,7 @@ async function api(path, options = {}) {
   if (!response.ok || !payload.ok) throw new Error(payload.error?.code ?? `HTTP ${response.status}`);
   return payload.result;
 }
-function field(value, type, room, endpoint, key) { const input = document.createElement(type === "boolean" ? "input" : "input"); input.type = type === "boolean" ? "checkbox" : "text"; input.value = type === "boolean" ? "" : (value ?? ""); input.checked = type === "boolean" ? Boolean(value) : false; input.dataset.room = room; input.dataset.endpoint = endpoint; input.dataset.key = key; input.addEventListener("change", edit); return input; }
+function field(value, type, room, endpoint, key) { const input = document.createElement("input"); input.type = type === "boolean" ? "checkbox" : "text"; input.value = type === "boolean" ? "" : (value ?? ""); input.checked = type === "boolean" ? Boolean(value) : false; input.dataset.room = room; input.dataset.endpoint = endpoint; input.dataset.key = key; input.addEventListener("change", edit); return input; }
 function edit(event) { const el = event.target; const endpoint = state.links[Number(el.dataset.room)].endpoints[Number(el.dataset.endpoint)]; endpoint[el.dataset.key] = el.type === "checkbox" ? el.checked : el.value; }
 function renderRooms() {
   const root = $("#rooms"); root.replaceChildren();
