@@ -61,6 +61,7 @@ export class DeliveryWorker {
     maxConcurrency = 1,
     maxConcurrencyPerAccount = 1,
     rateLimiter,
+    healthProjection,
     now = Date.now,
     leaseTokenFactory = randomUUID,
     setTimer = setTimeout,
@@ -85,6 +86,12 @@ export class DeliveryWorker {
     )) {
       throw new TypeError("rateLimiter must implement tryAcquire, unavailableAccounts, and block");
     }
+    if (healthProjection !== undefined && (
+      typeof healthProjection.recordSuccess !== "function" ||
+      typeof healthProjection.recordFailure !== "function"
+    )) {
+      throw new TypeError("healthProjection must implement recordSuccess and recordFailure");
+    }
 
     this.store = store;
     this.sender = sender;
@@ -95,6 +102,7 @@ export class DeliveryWorker {
     this.maxConcurrency = maxConcurrency;
     this.maxConcurrencyPerAccount = maxConcurrencyPerAccount;
     this.rateLimiter = rateLimiter;
+    this.healthProjection = healthProjection;
     this.now = now;
     this.leaseTokenFactory = leaseTokenFactory;
     this.setTimer = setTimer;
@@ -152,13 +160,16 @@ export class DeliveryWorker {
     const leaseToken = delivery.leaseToken;
     try {
       const result = await this.sender(delivery.request);
-      return Boolean(
-        this.store.completeDelivery(delivery.id, {
+      const completedAtMs = this.now();
+      const completed = this.store.completeDelivery(delivery.id, {
           leaseToken,
           messageId: result?.messageId ?? null,
-          completedAtMs: this.now(),
-        }),
-      );
+          completedAtMs,
+        });
+      if (completed) {
+        this.healthProjection?.recordSuccess(accountDescriptor(delivery), completedAtMs);
+      }
+      return Boolean(completed);
     } catch (error) {
       const retryable = error?.retryable !== false;
       const exponentialMs = Math.min(60_000, 1_000 * 2 ** Math.max(0, delivery.attempts - 1));
@@ -179,13 +190,21 @@ export class DeliveryWorker {
           failureAtMs,
         );
       }
-      this.store.retryDelivery(delivery.id, {
+      const retried = this.store.retryDelivery(delivery.id, {
         leaseToken,
         code: failureCode,
-        nextAttemptAtMs: this.now() + delayMs,
+        nextAttemptAtMs: failureAtMs + delayMs,
         maxAttempts: retryable ? this.maxAttempts : delivery.attempts,
-        updatedAtMs: this.now(),
+        updatedAtMs: failureAtMs,
       });
+      if (retried) {
+        this.healthProjection?.recordFailure(accountDescriptor(delivery), {
+          code: failureCode,
+          failedAtMs: failureAtMs,
+          nextRetryAtMs: retried.status === "failed" ? null : failureAtMs + delayMs,
+          terminal: retried.status === "failed",
+        });
+      }
       return false;
     }
   }

@@ -129,6 +129,59 @@ test("claims, sends, and completes one delivery with the active lease", async ()
   ]);
 });
 
+test("projects only durable delivery success and failure outcomes", async () => {
+  const successStore = createStore(JOB);
+  const outcomes = [];
+  const projection = {
+    recordSuccess(account, atMs) {
+      outcomes.push({ type: "success", account, atMs });
+    },
+    recordFailure(account, failure) {
+      outcomes.push({ type: "failure", account, failure });
+    },
+  };
+  const successWorker = new DeliveryWorker({
+    store: successStore,
+    sender: async () => ({ messageId: "sent" }),
+    healthProjection: projection,
+    now: () => 1_000,
+  });
+  await successWorker.tick();
+
+  const failureStore = createStore({ ...JOB, id: "dlv_2", attempts: 5 });
+  failureStore.retryDelivery = function retryDelivery(id, options) {
+    this.retried.push({ id, ...options });
+    return { id, status: "failed" };
+  };
+  const failureWorker = new DeliveryWorker({
+    store: failureStore,
+    sender: async () => {
+      throw Object.assign(new Error("secret"), { code: "ACCOUNT_DISABLED", retryable: false });
+    },
+    healthProjection: projection,
+    now: () => 2_000,
+  });
+  await failureWorker.tick();
+
+  assert.deepEqual(outcomes, [
+    {
+      type: "success",
+      account: { channel: "feishu", accountId: "default" },
+      atMs: 1_000,
+    },
+    {
+      type: "failure",
+      account: { channel: "feishu", accountId: "default" },
+      failure: {
+        code: "ACCOUNT_DISABLED",
+        failedAtMs: 2_000,
+        nextRetryAtMs: null,
+        terminal: true,
+      },
+    },
+  ]);
+});
+
 test("drains a bounded backlog sequentially in one tick", async () => {
   const jobs = [1, 2, 3].map((index) => ({
     ...JOB,

@@ -131,6 +131,7 @@ test("passes bounded delivery concurrency into the worker", async () => {
 
   assert.equal(runtime.worker.maxConcurrency, 12);
   assert.equal(runtime.worker.maxConcurrencyPerAccount, 5);
+  assert.equal(runtime.worker.healthProjection, runtime.deliveryHealth);
   assert.deepEqual(runtime.worker.rateLimiter.defaultPolicy, {
     ratePerSecond: 7,
     burst: 11,

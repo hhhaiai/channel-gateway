@@ -2,6 +2,7 @@ import { createApiHandler } from "./api-handler.js";
 import { AccountRateLimiter } from "./account-rate-limiter.js";
 import { CorrelationBuffer } from "./correlation-buffer.js";
 import { DeliveryWorker } from "./delivery-worker.js";
+import { DeliveryHealthProjection } from "./delivery-health-projection.js";
 import { EventStore } from "./event-store.js";
 import { normalizeInboundEvent } from "./event-normalizer.js";
 import { createGatewayRpc } from "./gateway-rpc.js";
@@ -107,6 +108,9 @@ export function createBridgeRuntime({
         now,
       })
     : undefined;
+  const deliveryHealth = new DeliveryHealthProjection({
+    deliveryStats: () => store.deliveryAccountStats?.() ?? [],
+  });
   const worker = sender && compiledLinks.links.length > 0
     ? new DeliveryWorker({
         store,
@@ -117,6 +121,7 @@ export function createBridgeRuntime({
         maxConcurrency: deliveryMaxConcurrency,
         maxConcurrencyPerAccount: deliveryMaxConcurrencyPerAccount,
         rateLimiter,
+        healthProjection: deliveryHealth,
         now,
       })
     : undefined;
@@ -243,6 +248,7 @@ export function createBridgeRuntime({
     links: compiledLinks,
     worker,
     rateLimiter,
+    deliveryHealth,
     handleHttp: resolvedHttpHandler,
     onMessageReceived,
     onBeforeDispatch,

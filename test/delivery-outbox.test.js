@@ -103,6 +103,51 @@ test("can complete a delivery when the provider returns no receipt id", () => {
   store.close();
 });
 
+test("summarizes delivery backlog by destination account", () => {
+  const store = new EventStore(":memory:", { now: () => 1_000 });
+  store.enqueue(EVENT, { deliveries: jobsFor() });
+  const claimed = store.claimNextDelivery({
+    nowMs: 1_000,
+    leaseMs: 30_000,
+    leaseToken: "lease-stats",
+  });
+  store.retryDelivery(claimed.id, {
+    leaseToken: "lease-stats",
+    code: "TIMEOUT",
+    nextAttemptAtMs: 9_000,
+    maxAttempts: 5,
+    updatedAtMs: 1_001,
+  });
+
+  assert.deepEqual(store.deliveryAccountStats(), [
+    {
+      channel: "feishu",
+      accountId: "default",
+      pending: 1,
+      sending: 0,
+      failed: 0,
+      nextRetryAtMs: 9_000,
+    },
+    {
+      channel: "telegram",
+      accountId: "default",
+      pending: 1,
+      sending: 0,
+      failed: 0,
+      nextRetryAtMs: 1_000,
+    },
+    {
+      channel: "whatsapp",
+      accountId: "default",
+      pending: 1,
+      sending: 0,
+      failed: 0,
+      nextRetryAtMs: 1_000,
+    },
+  ]);
+  store.close();
+});
+
 test("does not duplicate delivery jobs when the same event is enriched", () => {
   const store = new EventStore(":memory:");
   const jobs = jobsFor();

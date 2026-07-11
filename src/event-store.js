@@ -574,6 +574,28 @@ export class EventStore extends EventEmitter {
     return counts;
   }
 
+  deliveryAccountStats() {
+    return this.database.prepare(
+      `SELECT destination_channel AS channel,
+              destination_account_id AS accountId,
+              SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending,
+              SUM(CASE WHEN status = 'sending' THEN 1 ELSE 0 END) AS sending,
+              SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed,
+              MIN(CASE WHEN status = 'pending' THEN next_attempt_at_ms END) AS nextRetryAtMs
+       FROM deliveries
+       WHERE status IN ('pending', 'sending', 'failed')
+       GROUP BY destination_channel, destination_account_id
+       ORDER BY destination_channel, destination_account_id`,
+    ).all().map((row) => ({
+      channel: row.channel,
+      accountId: row.accountId,
+      pending: Number(row.pending),
+      sending: Number(row.sending),
+      failed: Number(row.failed),
+      nextRetryAtMs: row.nextRetryAtMs === null ? null : Number(row.nextRetryAtMs),
+    }));
+  }
+
   findEcho({ channel, accountId = "default", conversationId, messageId }) {
     const row = this.database
       .prepare(
