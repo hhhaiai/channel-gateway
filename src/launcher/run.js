@@ -33,6 +33,11 @@ export async function runChannelGateway({
     channelPackages,
     env,
   });
+  if (config.skippedPluginIds?.length > 0) {
+    processRef.stderr?.write(
+      `channel-gateway: optional plugin(s) ${config.skippedPluginIds.join(", ")} installed but not enabled in existing config; follow the upgrade guide to enable them\n`,
+    );
+  }
   const { token } = await ensureGatewayToken({
     env,
     credentialsDir: paths.credentialsDir,

@@ -1,10 +1,12 @@
 import { createHash, randomBytes } from "node:crypto";
-import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 const SUPPORTED_OPENCLAW_VERSION = "2026.6.11";
-const PATCH_VERSION = 1;
-const MARKER_FILE = ".channel-gateway-rich-hook-v1.json";
+const PATCH_VERSION = 2;
+const MARKER_FILE = ".channel-gateway-rich-hook-v2.json";
+const LEGACY_PATCH_VERSION = 1;
+const LEGACY_MARKER_FILE = ".channel-gateway-rich-hook-v1.json";
 
 const RUNTIME_DECLARATION = `\tconst hookContext = deriveInboundMessageHookContext(ctx, { messageId: messageIdForHook });
 \tconst { isGroup, groupId } = hookContext;
@@ -49,7 +51,7 @@ const BEFORE_DISPATCH_CALL = `\t\tif (hookRunner?.hasHooks("before_dispatch")) {
 \t\t\t\treplyToIsQuote: hookContext.replyToIsQuote
 \t\t\t})));`;
 
-const PATCHED_BEFORE_DISPATCH_CALL = `\t\tif (hookRunner?.hasHooks("before_dispatch")) {
+const LEGACY_PATCHED_BEFORE_DISPATCH_CALL = `\t\tif (hookRunner?.hasHooks("before_dispatch")) {
 \t\t\tlet mediaStagingError = false;
 \t\t\tconst remoteMediaPaths = Array.isArray(ctx.MediaPaths) && ctx.MediaPaths.length > 0 ? ctx.MediaPaths : ctx.MediaPath ? [ctx.MediaPath] : [];
 \t\t\tif (ctx.MediaRemoteHost && remoteMediaPaths.length > 0) {
@@ -142,6 +144,17 @@ const PATCHED_BEFORE_DISPATCH_CALL = `\t\tif (hookRunner?.hasHooks("before_dispa
 \t\t\t\tmediaTypes: hookContext.mediaTypes,
 \t\t\t\tmetadata: beforeDispatchMetadata
 \t\t\t})));`;
+
+const PATCHED_BEFORE_DISPATCH_CALL = LEGACY_PATCHED_BEFORE_DISPATCH_CALL
+  .replace(
+    "\t\t\tconst beforeDispatchMetadata = {",
+    `\t\t\tconst chatType = typeof ctx.ChatType === "string" ? ctx.ChatType.trim().toLowerCase() : "";
+\t\t\tconst beforeDispatchMetadata = {`,
+  )
+  .replace(
+    "\t\t\t\tisGroup: hookContext.isGroup,",
+    `\t\t\t\tisGroup: hookContext.isGroup || chatType === "group" || chatType === "channel",`,
+  );
 
 const TYPE_DECLARATIONS = `type PluginHookBeforeDispatchEvent = {
   content: string;
@@ -308,8 +321,8 @@ async function buildMarker(root, packageVersion, changedFiles) {
   };
 }
 
-async function readMarker(root) {
-  const markerPath = path.join(root, MARKER_FILE);
+async function readMarker(root, markerFile = MARKER_FILE) {
+  const markerPath = path.join(root, markerFile);
   try {
     return JSON.parse(await readFile(markerPath, "utf8"));
   } catch (error) {
@@ -318,11 +331,11 @@ async function readMarker(root) {
   }
 }
 
-function validateMarkerShape(marker) {
+function validateMarkerShape(marker, patchVersion = PATCH_VERSION) {
   if (
     marker === null ||
     typeof marker !== "object" ||
-    marker.patchVersion !== PATCH_VERSION ||
+    marker.patchVersion !== patchVersion ||
     marker.packageVersion !== SUPPORTED_OPENCLAW_VERSION ||
     marker.files === null ||
     typeof marker.files !== "object" ||
@@ -345,11 +358,8 @@ function validateMarkerShape(marker) {
   return entries;
 }
 
-export async function verifyOpenClawRichHookPatch(root) {
-  const packageVersion = await readPackageVersion(root);
-  const marker = await readMarker(root);
-  if (!marker) throw new Error(`missing ${MARKER_FILE}`);
-  const entries = validateMarkerShape(marker);
+async function verifiedMarkerFiles(root, marker, patchVersion = PATCH_VERSION) {
+  const entries = validateMarkerShape(marker, patchVersion);
   const verifiedFiles = [];
   for (const [relativePath, expectedHash] of entries) {
     let bytes;
@@ -362,12 +372,43 @@ export async function verifyOpenClawRichHookPatch(root) {
     if (actualHash !== expectedHash) throw new Error(`hash mismatch for ${relativePath}`);
     verifiedFiles.push({ relativePath, source: bytes.toString("utf8") });
   }
+  return { entries, verifiedFiles };
+}
+
+async function verifiedLegacyMarkerFiles(root, marker) {
+  const entries = validateMarkerShape(marker, LEGACY_PATCH_VERSION);
+  const verifiedFiles = [];
+  let runtimeAlreadyUpgraded = false;
+  for (const [relativePath, expectedHash] of entries) {
+    let bytes;
+    try {
+      bytes = await readFile(path.join(root, ...relativePath.split("/")));
+    } catch (error) {
+      throw new Error(`unable to verify ${relativePath}: ${error.message}`);
+    }
+    const source = bytes.toString("utf8");
+    if (sha256(bytes) !== expectedHash) {
+      const restoredLegacySource = relativePath.endsWith(".js") &&
+        countExact(source, PATCHED_BEFORE_DISPATCH_CALL) === 1
+        ? source.replace(PATCHED_BEFORE_DISPATCH_CALL, LEGACY_PATCHED_BEFORE_DISPATCH_CALL)
+        : undefined;
+      if (restoredLegacySource === undefined || sha256(restoredLegacySource) !== expectedHash) {
+        throw new Error(`hash mismatch for ${relativePath}`);
+      }
+      runtimeAlreadyUpgraded = true;
+    }
+    verifiedFiles.push({ relativePath, source });
+  }
+  return { entries, verifiedFiles, runtimeAlreadyUpgraded };
+}
+
+function assertPatchedFiles(verifiedFiles, beforeDispatchCall) {
   const runtimeFiles = verifiedFiles.filter(({ relativePath }) => relativePath.endsWith(".js"));
   const declarationFiles = verifiedFiles.filter(({ relativePath }) => relativePath.endsWith(".d.ts"));
   if (
     runtimeFiles.length !== 1 ||
     countExact(runtimeFiles[0].source, PATCHED_RUNTIME_DECLARATION) !== 1 ||
-    countExact(runtimeFiles[0].source, PATCHED_BEFORE_DISPATCH_CALL) !== 1 ||
+    countExact(runtimeFiles[0].source, beforeDispatchCall) !== 1 ||
     countExact(runtimeFiles[0].source, RUNTIME_DECLARATION) !== 0 ||
     countExact(runtimeFiles[0].source, BEFORE_DISPATCH_CALL) !== 0
   ) {
@@ -383,6 +424,15 @@ export async function verifyOpenClawRichHookPatch(root) {
   ) {
     throw new Error("declaration patch postcondition failed");
   }
+  return runtimeFiles[0];
+}
+
+export async function verifyOpenClawRichHookPatch(root) {
+  const packageVersion = await readPackageVersion(root);
+  const marker = await readMarker(root);
+  if (!marker) throw new Error(`missing ${MARKER_FILE}`);
+  const { entries, verifiedFiles } = await verifiedMarkerFiles(root, marker);
+  assertPatchedFiles(verifiedFiles, PATCHED_BEFORE_DISPATCH_CALL);
   return {
     verified: true,
     packageVersion,
@@ -395,7 +445,35 @@ export async function applyOpenClawRichHookPatch(root) {
   const packageVersion = await readPackageVersion(root);
   if (await readMarker(root)) {
     const verification = await verifyOpenClawRichHookPatch(root);
+    await rm(path.join(root, LEGACY_MARKER_FILE), { force: true });
     return { ...verification, applied: false };
+  }
+
+  const legacyMarker = await readMarker(root, LEGACY_MARKER_FILE);
+  if (legacyMarker) {
+    const { entries, verifiedFiles, runtimeAlreadyUpgraded } =
+      await verifiedLegacyMarkerFiles(root, legacyMarker);
+    const runtimeFile = assertPatchedFiles(
+      verifiedFiles,
+      runtimeAlreadyUpgraded ? PATCHED_BEFORE_DISPATCH_CALL : LEGACY_PATCHED_BEFORE_DISPATCH_CALL,
+    );
+    const upgradedRuntime = runtimeAlreadyUpgraded
+      ? runtimeFile.source
+      : runtimeFile.source.replace(LEGACY_PATCHED_BEFORE_DISPATCH_CALL, PATCHED_BEFORE_DISPATCH_CALL);
+    if (countExact(upgradedRuntime, PATCHED_BEFORE_DISPATCH_CALL) !== 1) {
+      throw new Error("runtime patch upgrade postcondition failed");
+    }
+    const runtimePath = path.join(root, ...runtimeFile.relativePath.split("/"));
+    if (!runtimeAlreadyUpgraded) await atomicWrite(runtimePath, upgradedRuntime);
+    const marker = await buildMarker(
+      root,
+      packageVersion,
+      entries.map(([relativePath]) => path.join(root, ...relativePath.split("/"))),
+    );
+    await atomicWrite(path.join(root, MARKER_FILE), `${JSON.stringify(marker, null, 2)}\n`);
+    await rm(path.join(root, LEGACY_MARKER_FILE), { force: true });
+    const verification = await verifyOpenClawRichHookPatch(root);
+    return { ...verification, applied: true, upgradedFrom: LEGACY_PATCH_VERSION };
   }
 
   const runtimeFiles = await listRuntimeFiles(root);

@@ -193,6 +193,8 @@ test("patches rich canonical fields, remote staging, declarations, and a hash ma
     const runtimePath = path.join(root, "dist", "dispatch-fixture.js");
     const runtime = await readFile(runtimePath, "utf8");
     assert.match(runtime, /let hookContext = deriveInboundMessageHookContext/);
+    assert.match(runtime, /ctx\.ChatType/);
+    assert.match(runtime, /chatType === "group" \|\| chatType === "channel"/);
     assert.match(runtime, /let inboundClaimContext = toPluginInboundClaimContext/);
     assert.match(runtime, /import\("\.\/stage-sandbox-media\.runtime\.js"\)/);
     assert.ok(
@@ -256,10 +258,10 @@ test("patches rich canonical fields, remote staging, declarations, and a hash ma
       }
     }
 
-    const markerPath = path.join(root, ".channel-gateway-rich-hook-v1.json");
+    const markerPath = path.join(root, ".channel-gateway-rich-hook-v2.json");
     const marker = JSON.parse(await readFile(markerPath, "utf8"));
     assert.equal(marker.packageVersion, "2026.6.11");
-    assert.equal(marker.patchVersion, 1);
+    assert.equal(marker.patchVersion, 2);
     assert.deepEqual(Object.keys(marker.files).sort(), [
       "dist/dispatch-fixture.js",
       "dist/hook-types-fixture.d.ts",
@@ -285,6 +287,131 @@ test("patches rich canonical fields, remote staging, declarations, and a hash ma
   });
 });
 
+test("upgrades a trusted v1 marker to group-aware v2", async () => {
+  await withFixture({}, async (root) => {
+    await applyOpenClawRichHookPatch(root);
+    const runtimePath = path.join(root, "dist", "dispatch-fixture.js");
+    const runtime = await readFile(runtimePath, "utf8");
+    const groupAware = 'hookContext.isGroup || chatType === "group" || chatType === "channel"';
+    const legacyRuntime = runtime
+      .replace(
+        '\t\t\tconst chatType = typeof ctx.ChatType === "string" ? ctx.ChatType.trim().toLowerCase() : "";\n',
+        "",
+      )
+      .replace(groupAware, "hookContext.isGroup");
+    assert.notEqual(legacyRuntime, runtime);
+    await writeFile(runtimePath, legacyRuntime);
+
+    const v2MarkerPath = path.join(root, ".channel-gateway-rich-hook-v2.json");
+    const v2Marker = JSON.parse(await readFile(v2MarkerPath, "utf8"));
+    await rm(v2MarkerPath);
+    const legacyFiles = { ...v2Marker.files };
+    legacyFiles["dist/dispatch-fixture.js"] = createHash("sha256")
+      .update(legacyRuntime)
+      .digest("hex");
+    await writeFile(
+      path.join(root, ".channel-gateway-rich-hook-v1.json"),
+      `${JSON.stringify({ patchVersion: 1, packageVersion: "2026.6.11", files: legacyFiles }, null, 2)}\n`,
+    );
+
+    const upgraded = await applyOpenClawRichHookPatch(root);
+    assert.equal(upgraded.applied, true);
+    assert.equal(upgraded.upgradedFrom, 1);
+    assert.match(await readFile(runtimePath, "utf8"), new RegExp(groupAware.replace(/[|[\]{}()*+?.\\^$]/g, "\\$&")));
+    assert.equal((await verifyOpenClawRichHookPatch(root)).verified, true);
+    await assert.rejects(
+      readFile(path.join(root, ".channel-gateway-rich-hook-v1.json")),
+      { code: "ENOENT" },
+    );
+  });
+});
+
+test("recovers a v1 to v2 upgrade interrupted after the runtime write", async () => {
+  await withFixture({}, async (root) => {
+    await applyOpenClawRichHookPatch(root);
+    const runtimePath = path.join(root, "dist", "dispatch-fixture.js");
+    const upgradedRuntime = await readFile(runtimePath, "utf8");
+    const groupAware = 'hookContext.isGroup || chatType === "group" || chatType === "channel"';
+    const legacyRuntime = upgradedRuntime
+      .replace(
+        '\t\t\tconst chatType = typeof ctx.ChatType === "string" ? ctx.ChatType.trim().toLowerCase() : "";\n',
+        "",
+      )
+      .replace(groupAware, "hookContext.isGroup");
+    assert.notEqual(legacyRuntime, upgradedRuntime);
+
+    const v2MarkerPath = path.join(root, ".channel-gateway-rich-hook-v2.json");
+    const v2Marker = JSON.parse(await readFile(v2MarkerPath, "utf8"));
+    await rm(v2MarkerPath);
+    const legacyFiles = { ...v2Marker.files };
+    legacyFiles["dist/dispatch-fixture.js"] = createHash("sha256")
+      .update(legacyRuntime)
+      .digest("hex");
+    await writeFile(
+      path.join(root, ".channel-gateway-rich-hook-v1.json"),
+      `${JSON.stringify({ patchVersion: 1, packageVersion: "2026.6.11", files: legacyFiles }, null, 2)}\n`,
+    );
+
+    const recovered = await applyOpenClawRichHookPatch(root);
+    assert.equal(recovered.applied, true);
+    assert.equal(recovered.upgradedFrom, 1);
+    assert.equal(await readFile(runtimePath, "utf8"), upgradedRuntime);
+    assert.equal((await verifyOpenClawRichHookPatch(root)).verified, true);
+    await assert.rejects(
+      readFile(path.join(root, ".channel-gateway-rich-hook-v1.json")),
+      { code: "ENOENT" },
+    );
+  });
+});
+
+test("rejects a tampered runtime while recovering an interrupted v1 upgrade", async () => {
+  await withFixture({}, async (root) => {
+    await applyOpenClawRichHookPatch(root);
+    const runtimePath = path.join(root, "dist", "dispatch-fixture.js");
+    const upgradedRuntime = await readFile(runtimePath, "utf8");
+    const legacyRuntime = upgradedRuntime
+      .replace(
+        '\t\t\tconst chatType = typeof ctx.ChatType === "string" ? ctx.ChatType.trim().toLowerCase() : "";\n',
+        "",
+      )
+      .replace(
+        'hookContext.isGroup || chatType === "group" || chatType === "channel"',
+        "hookContext.isGroup",
+      );
+    const v2MarkerPath = path.join(root, ".channel-gateway-rich-hook-v2.json");
+    const v2Marker = JSON.parse(await readFile(v2MarkerPath, "utf8"));
+    await rm(v2MarkerPath);
+    await writeFile(
+      path.join(root, ".channel-gateway-rich-hook-v1.json"),
+      `${JSON.stringify({
+        patchVersion: 1,
+        packageVersion: "2026.6.11",
+        files: {
+          ...v2Marker.files,
+          "dist/dispatch-fixture.js": createHash("sha256").update(legacyRuntime).digest("hex"),
+        },
+      }, null, 2)}\n`,
+    );
+    await writeFile(runtimePath, `${upgradedRuntime}\n// interrupted-state tamper\n`);
+
+    await assert.rejects(
+      applyOpenClawRichHookPatch(root),
+      /hash mismatch for dist\/dispatch-fixture\.js/,
+    );
+  });
+});
+
+test("cleans a stale v1 marker after the v2 marker was committed", async () => {
+  await withFixture({}, async (root) => {
+    await applyOpenClawRichHookPatch(root);
+    const legacyMarkerPath = path.join(root, ".channel-gateway-rich-hook-v1.json");
+    await writeFile(legacyMarkerPath, "{}\n");
+
+    assert.equal((await applyOpenClawRichHookPatch(root)).applied, false);
+    await assert.rejects(readFile(legacyMarkerPath), { code: "ENOENT" });
+  });
+});
+
 test("does not trust a rehashed marker when patched runtime content changed", async () => {
   await withFixture({}, async (root) => {
     await applyOpenClawRichHookPatch(root);
@@ -294,7 +421,7 @@ test("does not trust a rehashed marker when patched runtime content changed", as
     assert.notEqual(changed, runtime);
     await writeFile(runtimePath, changed);
 
-    const markerPath = path.join(root, ".channel-gateway-rich-hook-v1.json");
+    const markerPath = path.join(root, ".channel-gateway-rich-hook-v2.json");
     const marker = JSON.parse(await readFile(markerPath, "utf8"));
     marker.files["dist/dispatch-fixture.js"] = createHash("sha256").update(changed).digest("hex");
     await writeFile(markerPath, `${JSON.stringify(marker, null, 2)}\n`);

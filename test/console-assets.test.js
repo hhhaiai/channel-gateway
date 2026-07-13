@@ -36,7 +36,11 @@ test("serves a dependency-free console with strict static headers", async (t) =>
   const appBody = await app.text();
   assert.match(appBody, /links\/config/);
   assert.match(appBody, /\["whatsapp", "WhatsApp"/);
-  assert.match(appBody, /\["wechat", "WeChat"/);
+  assert.match(appBody, /\["openclaw-weixin", "WeChat 私聊"/);
+  assert.match(appBody, /\["wecom", "企业微信群"/);
+  assert.match(appBody, /github\.com\/WecomTeam\/wecom-openclaw-plugin/);
+  assert.match(appBody, /平台官方插件：使用 all\/common profile 时固定安装并自动发现；base profile 不安装/);
+  assert.match(appBody, /channel\.kind === "partner" \? "platform official"/);
   assert.match(appBody, /effectiveDeliveryMaxConcurrency/);
   assert.match(appBody, /deliveryMaxConcurrencyAutoMax/);
   assert.match(appBody, /deliveryMaxConcurrency:/);
@@ -55,7 +59,8 @@ test("ships a per-channel integration console rather than a static channel list"
   assert.match(page, /id="channel-cards"/);
   assert.match(app, /const CHANNELS =/);
   assert.match(app, /\["telegram", "Telegram"/);
-  assert.match(app, /\["wechat", "WeChat"/);
+  assert.match(app, /\["openclaw-weixin", "WeChat 私聊"/);
+  assert.match(app, /\["wecom", "企业微信群"/);
   assert.match(app, /channels\/\$\{channel\.id\}\/\$\{action\}/);
   assert.match(app, /添加到互通房间/);
 });

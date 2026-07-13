@@ -9,9 +9,10 @@ import {
   resolveGatewaySettings,
 } from "../src/launcher/config.js";
 
-function packageDescriptor(id, rootDir) {
+function packageDescriptor(id, rootDir, pluginId = id) {
   return {
-    id,
+    pluginId,
+    channelIds: [id],
     name: `@openclaw/${id}`,
     version: "2026.6.11",
     rootDir,
@@ -67,6 +68,29 @@ test("writes a private minimal no-LLM config that enables the bridge and discove
   assert.equal(await readFile(configPath, "utf8"), `${JSON.stringify(expected, null, 2)}\n`);
   assert.equal((await stat(configPath)).mode & 0o777, 0o600);
   assert.equal("models" in expected, false);
+});
+
+test("enables a plugin by plugin id when its channel id differs", async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), "channel-gateway-wecom-config-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const configPath = path.join(directory, "openclaw.json");
+  const wecomRoot = path.join(directory, "plugins", "wecom");
+  const input = {
+    configPath,
+    serviceRoot: path.join(directory, "service"),
+    workspaceDir: path.join(directory, "workspace"),
+    databasePath: path.join(directory, "state", "channel-gateway.sqlite"),
+    channelPackages: [packageDescriptor("wecom", wecomRoot, "wecom-openclaw-plugin")],
+    env: {},
+  };
+
+  const created = await ensureInitialConfig(input);
+  assert.deepEqual(created.config.plugins.load.paths, [input.serviceRoot, wecomRoot]);
+  assert.deepEqual(created.config.plugins.entries["wecom-openclaw-plugin"], { enabled: true });
+  assert.equal(created.config.plugins.entries.wecom, undefined);
+
+  const existing = await ensureInitialConfig(input);
+  assert.equal(existing.created, false);
 });
 
 test("enables the WhatsApp message-received hook and custom bind only when selected", async (t) => {
@@ -188,12 +212,93 @@ test("fails fast when an existing config omits newly discovered channel packages
       ...baseInput,
       channelPackages: [
         {
-          id: "qqbot",
+          pluginId: "qqbot",
+          channelIds: ["qqbot"],
           rootDir: path.join(directory, "plugins", "qqbot"),
         },
       ],
     }),
     /existing config.*qqbot.*plugins\.load\.paths.*plugins\.entries/,
+  );
+});
+
+test("keeps an existing config runnable when a newly pinned optional plugin is absent", async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), "channel-gateway-existing-optional-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const configPath = path.join(directory, "openclaw.json");
+  const baseInput = {
+    configPath,
+    serviceRoot: path.join(directory, "service"),
+    workspaceDir: path.join(directory, "workspace"),
+    databasePath: path.join(directory, "state", "channel-gateway.sqlite"),
+    env: {},
+  };
+  await ensureInitialConfig({ ...baseInput, channelPackages: [] });
+  const before = await readFile(configPath, "utf8");
+
+  const result = await ensureInitialConfig({
+    ...baseInput,
+    channelPackages: [{
+      pluginId: "wecom-openclaw-plugin",
+      channelIds: ["wecom"],
+      rootDir: path.join(directory, "plugins", "wecom"),
+      existingConfigOptional: true,
+    }],
+  });
+
+  assert.deepEqual(result, {
+    created: false,
+    configPath,
+    config: undefined,
+    port: 18789,
+    skippedPluginIds: ["wecom-openclaw-plugin"],
+  });
+  assert.equal(await readFile(configPath, "utf8"), before);
+});
+
+test("rejects the reserved bridge plugin id for an existing config", async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), "channel-gateway-existing-reserved-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const configPath = path.join(directory, "openclaw.json");
+  const input = {
+    configPath,
+    serviceRoot: path.join(directory, "service"),
+    workspaceDir: path.join(directory, "workspace"),
+    databasePath: path.join(directory, "state", "channel-gateway.sqlite"),
+    env: {},
+  };
+  await ensureInitialConfig({ ...input, channelPackages: [] });
+
+  await assert.rejects(
+    () => ensureInitialConfig({
+      ...input,
+      channelPackages: [{
+        pluginId: "channel-gateway",
+        channelIds: ["reserved-channel"],
+        rootDir: path.join(directory, "plugins", "reserved"),
+      }],
+    }),
+    /pluginId channel-gateway is reserved/,
+  );
+});
+
+test("rejects case-insensitive duplicate plugin descriptors", async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), "channel-gateway-duplicate-descriptor-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  await assert.rejects(
+    () => ensureInitialConfig({
+      configPath: path.join(directory, "openclaw.json"),
+      serviceRoot: path.join(directory, "service"),
+      workspaceDir: path.join(directory, "workspace"),
+      databasePath: path.join(directory, "state", "channel-gateway.sqlite"),
+      channelPackages: [
+        { pluginId: "Example", channelIds: ["first"], rootDir: path.join(directory, "first") },
+        { pluginId: "example", channelIds: ["second"], rootDir: path.join(directory, "second") },
+      ],
+      env: {},
+    }),
+    /duplicate channel plugin id example conflicts with Example/,
   );
 });
 
@@ -256,7 +361,7 @@ test("a first-run race loser validates the winner before continuing", async (t) 
       serviceRoot: path.join(directory, "service"),
       workspaceDir: path.join(directory, "workspace"),
       databasePath: path.join(directory, "state", "channel-gateway.sqlite"),
-      channelPackages: [{ id: "qqbot", rootDir: qqRoot }],
+      channelPackages: [{ pluginId: "qqbot", channelIds: ["qqbot"], rootDir: qqRoot }],
       env: {},
       async writeExclusive(filePath, contents) {
         const winner = JSON.parse(contents);

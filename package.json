@@ -45,7 +45,8 @@
     "@openclaw/twitch": "2026.6.11",
     "@openclaw/whatsapp": "2026.6.11",
     "@openclaw/zalo": "2026.6.11",
-    "@openclaw/zalouser": "2026.6.11"
+    "@openclaw/zalouser": "2026.6.11",
+    "@wecom/wecom-openclaw-plugin": "2026.5.25"
   },
   "openclaw": {
     "extensions": [

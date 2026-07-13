@@ -19,7 +19,9 @@ const CHANNELS = [
   ["nextcloud-talk", "Nextcloud Talk", "official"], ["nostr", "Nostr", "official"], ["qqbot", "QQ Bot", "official"],
   ["raft", "Raft", "official"], ["signal", "Signal", "official"], ["slack", "Slack", "official"], ["sms", "SMS", "official"],
   ["synology-chat", "Synology Chat", "official"], ["telegram", "Telegram", "core"], ["tlon", "Tlon", "official"],
-  ["twitch", "Twitch", "official"], ["webchat", "WebChat", "core", "/web/webchat"], ["wechat", "WeChat", "external"],
+  ["twitch", "Twitch", "official"], ["webchat", "WebChat", "core", "/web/webchat"],
+  ["openclaw-weixin", "WeChat 私聊", "external", "/channels/wechat"],
+  ["wecom", "企业微信群", "partner", "https://github.com/WecomTeam/wecom-openclaw-plugin"],
   ["whatsapp", "WhatsApp", "official"], ["yuanbao", "Yuanbao", "external"], ["zalo", "Zalo", "official"],
   ["zaloclawbot", "Zalo ClawBot", "external"], ["zalouser", "Zalo Personal", "official"],
   ["voice-call", "Voice Call", "plugin", "/plugins/voice-call"],
@@ -152,7 +154,11 @@ function renderChannelCards() {
     heading.textContent = channel.name;
     const badge = document.createElement("span");
     badge.className = "badge";
-    badge.textContent = channel.kind === "core" ? "core" : channel.kind === "official" ? "official plugin" : channel.kind;
+    badge.textContent = channel.kind === "core"
+      ? "core"
+      : channel.kind === "official"
+        ? "official plugin"
+        : channel.kind === "partner" ? "platform official" : channel.kind;
     heading.append(" ", badge);
     card.append(heading);
 
@@ -160,6 +166,8 @@ function renderChannelCards() {
     guide.className = "muted";
     guide.textContent = channel.kind === "core"
       ? "Core Channel：按官方页面配置后即可使用。"
+      : channel.kind === "partner"
+        ? "平台官方插件：使用 all/common profile 时固定安装并自动发现；base profile 不安装。"
       : channel.kind === "external"
         ? "外置 Channel：按官方页面安装，并通过 CHANNEL_GATEWAY_PLUGIN_PATHS 加载绝对路径。"
         : channel.kind === "plugin"
@@ -168,7 +176,9 @@ function renderChannelCards() {
     card.append(guide);
 
     const docs = document.createElement("a");
-    docs.href = `https://docs.openclaw.ai${channel.docPath}`;
+    docs.href = channel.docPath.startsWith("https://")
+      ? channel.docPath
+      : `https://docs.openclaw.ai${channel.docPath}`;
     docs.target = "_blank";
     docs.rel = "noreferrer";
     docs.textContent = "打开官方集成文档";

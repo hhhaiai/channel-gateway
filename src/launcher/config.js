@@ -100,6 +100,34 @@ function normalizedLoadPaths(config) {
   );
 }
 
+function channelPackagePluginId(channelPackage) {
+  if (typeof channelPackage?.pluginId !== "string" || !channelPackage.pluginId.trim()) {
+    throw new Error("channel package pluginId must be a non-empty string");
+  }
+  const pluginId = channelPackage.pluginId.trim();
+  if (pluginId.toLowerCase() === "channel-gateway") {
+    throw new Error(`channel package pluginId ${pluginId} is reserved`);
+  }
+  return pluginId;
+}
+
+function channelPackageProvides(channelPackage, channelId) {
+  return Array.isArray(channelPackage?.channelIds) && channelPackage.channelIds.includes(channelId);
+}
+
+function assertUniqueChannelPackagePluginIds(channelPackages) {
+  const pluginIds = new Map();
+  for (const channelPackage of channelPackages) {
+    const pluginId = channelPackagePluginId(channelPackage);
+    const key = pluginId.toLowerCase();
+    const existing = pluginIds.get(key);
+    if (existing) {
+      throw new Error(`duplicate channel plugin id ${pluginId} conflicts with ${existing}`);
+    }
+    pluginIds.set(key, pluginId);
+  }
+}
+
 function assertExistingConfigReady({
   config,
   serviceRoot,
@@ -108,6 +136,7 @@ function assertExistingConfigReady({
   channelPackages,
 }) {
   const issues = [];
+  const skippedPluginIds = [];
   const loadPaths = normalizedLoadPaths(config);
   const bridge = config.plugins?.entries?.["channel-gateway"];
   if (config.gateway?.mode !== "local") issues.push("gateway.mode=local");
@@ -142,16 +171,26 @@ function assertExistingConfigReady({
   }
 
   for (const channelPackage of channelPackages) {
+    const pluginId = channelPackagePluginId(channelPackage);
     const rootDir = path.normalize(channelPackage.rootDir);
-    const enabled = config.plugins?.entries?.[channelPackage.id]?.enabled === true;
-    if (!loadPaths.has(rootDir) || !enabled) {
+    const entry = config.plugins?.entries?.[pluginId];
+    const hasLoadPath = loadPaths.has(rootDir);
+    const enabled = entry?.enabled === true;
+    if (hasLoadPath && enabled) {
+      continue;
+    }
+    if (channelPackage.existingConfigOptional === true && !hasLoadPath && entry === undefined) {
+      skippedPluginIds.push(pluginId);
+      continue;
+    }
+    if (!hasLoadPath || !enabled) {
       issues.push(
-        `${channelPackage.id} must be present in plugins.load.paths and plugins.entries.${channelPackage.id}.enabled=true`,
+        `${pluginId} must be present in plugins.load.paths and plugins.entries.${pluginId}.enabled=true`,
       );
     }
   }
   if (
-    channelPackages.some((channelPackage) => channelPackage.id === "whatsapp") &&
+    channelPackages.some((channelPackage) => channelPackageProvides(channelPackage, "whatsapp")) &&
     config.channels?.whatsapp?.pluginHooks?.messageReceived !== true
   ) {
     issues.push("channels.whatsapp.pluginHooks.messageReceived=true");
@@ -160,6 +199,7 @@ function assertExistingConfigReady({
   if (issues.length > 0) {
     throw new Error(`existing config is not ready for channel-gateway: ${issues.join("; ")}`);
   }
+  return skippedPluginIds;
 }
 
 async function validateExistingConfig({
@@ -172,14 +212,17 @@ async function validateExistingConfig({
   gatewaySettings,
 }) {
   const config = await loadOperatorConfig(configPath);
-  assertExistingConfigReady({
+  const skippedPluginIds = assertExistingConfigReady({
     config,
     serviceRoot,
     workspaceDir,
     databasePath,
     channelPackages,
   });
-  return hasOwn(env, "CHANNEL_GATEWAY_PORT") ? gatewaySettings.port : config.gateway.port;
+  return {
+    port: hasOwn(env, "CHANNEL_GATEWAY_PORT") ? gatewaySettings.port : config.gateway.port,
+    skippedPluginIds,
+  };
 }
 
 function buildPluginEntries(channelPackages, databasePath) {
@@ -195,14 +238,11 @@ function buildPluginEntries(channelPackages, databasePath) {
   };
 
   for (const channelPackage of channelPackages) {
-    if (typeof channelPackage?.id !== "string" || !channelPackage.id.trim()) {
-      throw new Error("channel package id must be a non-empty string");
+    const pluginId = channelPackagePluginId(channelPackage);
+    if (entries[pluginId]) {
+      throw new Error(`duplicate channel plugin id ${pluginId}`);
     }
-    const id = channelPackage.id.trim();
-    if (id === "channel-gateway" || entries[id]) {
-      throw new Error(`duplicate channel plugin id ${id}`);
-    }
-    entries[id] = { enabled: true };
+    entries[pluginId] = { enabled: true };
   }
   return entries;
 }
@@ -216,7 +256,8 @@ function buildInitialConfig({
 }) {
   const loadPaths = [serviceRoot];
   for (const channelPackage of channelPackages) {
-    const rootDir = requireAbsolutePath(channelPackage.rootDir, `${channelPackage.id} rootDir`);
+    const pluginId = channelPackagePluginId(channelPackage);
+    const rootDir = requireAbsolutePath(channelPackage.rootDir, `${pluginId} rootDir`);
     if (!loadPaths.includes(rootDir)) {
       loadPaths.push(rootDir);
     }
@@ -244,7 +285,7 @@ function buildInitialConfig({
     },
   };
 
-  if (channelPackages.some((channelPackage) => channelPackage.id === "whatsapp")) {
+  if (channelPackages.some((channelPackage) => channelPackageProvides(channelPackage, "whatsapp"))) {
     config.channels = {
       whatsapp: { pluginHooks: { messageReceived: true } },
     };
@@ -269,10 +310,11 @@ export async function ensureInitialConfig({
   if (!Array.isArray(channelPackages)) {
     throw new Error("channelPackages must be an array");
   }
+  assertUniqueChannelPackagePluginIds(channelPackages);
 
   const gatewaySettings = resolveGatewaySettings(env);
   if (await exists(normalizedConfigPath)) {
-    const port = await validateExistingConfig({
+    const { port, skippedPluginIds } = await validateExistingConfig({
       configPath: normalizedConfigPath,
       serviceRoot: normalizedServiceRoot,
       workspaceDir: normalizedWorkspaceDir,
@@ -286,6 +328,7 @@ export async function ensureInitialConfig({
       configPath: normalizedConfigPath,
       config: undefined,
       port,
+      ...(skippedPluginIds.length > 0 ? { skippedPluginIds } : {}),
     };
   }
 
@@ -305,7 +348,7 @@ export async function ensureInitialConfig({
   );
 
   if (!created) {
-    const port = await validateExistingConfig({
+    const { port, skippedPluginIds } = await validateExistingConfig({
       configPath: normalizedConfigPath,
       serviceRoot: normalizedServiceRoot,
       workspaceDir: normalizedWorkspaceDir,
@@ -319,6 +362,7 @@ export async function ensureInitialConfig({
       configPath: normalizedConfigPath,
       config: undefined,
       port,
+      ...(skippedPluginIds.length > 0 ? { skippedPluginIds } : {}),
     };
   }
 
